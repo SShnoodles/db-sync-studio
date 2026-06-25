@@ -1,0 +1,191 @@
+use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, Value};
+use serde_json::{Number, Value as JsonValue};
+use std::collections::BTreeMap;
+
+use super::{ColumnMeta, DbConnection, TableMeta};
+
+fn pool(connection: &DbConnection) -> Result<Pool, String> {
+    connection.validate()?;
+    let options = OptsBuilder::new()
+        .ip_or_hostname(Some(connection.host.clone().unwrap_or_default()))
+        .tcp_port(connection.port.unwrap_or(3306))
+        .db_name(Some(connection.database.clone()))
+        .user(connection.username.clone())
+        .pass(connection.password.clone());
+    Pool::new(options).map_err(|error| format!("Unable to create MySQL connection: {error}"))
+}
+
+pub fn test_connection(connection: &DbConnection) -> Result<String, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let version: Option<String> = conn
+        .query_first("SELECT VERSION()")
+        .map_err(|error| format!("Connection test failed: {error}"))?;
+    Ok(format!(
+        "Connected to MySQL {}",
+        version.unwrap_or_else(|| "server".into())
+    ))
+}
+
+pub fn list_tables(connection: &DbConnection) -> Result<Vec<TableMeta>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let rows: Vec<(String, String)> = conn.exec(
+        "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name",
+        (),
+    ).map_err(|error| format!("Unable to load tables: {error}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, table_type)| TableMeta {
+            name,
+            schema: Some(connection.database.clone()),
+            table_type,
+        })
+        .collect())
+}
+
+pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<ColumnMeta>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    conn.exec_map(
+        "SELECT table_name, column_name, column_type, is_nullable, column_default, column_key, extra, ordinal_position
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = ?
+         ORDER BY ordinal_position",
+        (table,),
+        |(
+            table_name,
+            name,
+            column_type,
+            is_nullable,
+            default_value,
+            column_key,
+            extra,
+            ordinal_position,
+        ): (String, String, String, String, Option<String>, String, String, u64)| {
+            ColumnMeta {
+                table_name,
+                name,
+                column_type,
+                nullable: is_nullable == "YES",
+                default_value,
+                is_primary_key: column_key == "PRI",
+                extra: if extra.is_empty() { None } else { Some(extra) },
+                ordinal_position,
+            }
+        },
+    )
+    .map_err(|error| format!("Unable to load columns for {table}: {error}"))
+}
+
+pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<String, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let escaped_table = escape_identifier(table);
+    let row: Option<(String, String)> = conn
+        .query_first(format!("SHOW CREATE TABLE `{escaped_table}`"))
+        .map_err(|error| format!("Unable to read CREATE TABLE for {table}: {error}"))?;
+    row.map(|(_, create_sql)| format!("{create_sql};"))
+        .ok_or_else(|| format!("CREATE TABLE statement was not found for {table}"))
+}
+
+pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    conn.exec_map(
+        "SELECT column_name
+         FROM information_schema.key_column_usage
+         WHERE table_schema = DATABASE() AND table_name = ? AND constraint_name = 'PRIMARY'
+         ORDER BY ordinal_position",
+        (table,),
+        |column_name: String| column_name,
+    )
+    .map_err(|error| format!("Unable to load primary keys for {table}: {error}"))
+}
+
+pub fn fetch_rows(
+    connection: &DbConnection,
+    table: &str,
+    order_columns: &[String],
+    limit: usize,
+) -> Result<Vec<BTreeMap<String, JsonValue>>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let escaped_table = escape_identifier(table);
+    let order_by = if order_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " ORDER BY {}",
+            order_columns
+                .iter()
+                .map(|column| format!("`{}`", escape_identifier(column)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let sql = format!("SELECT * FROM `{escaped_table}`{order_by} LIMIT {limit}");
+    let rows: Vec<Row> = conn
+        .query(sql)
+        .map_err(|error| format!("Unable to fetch rows from {table}: {error}"))?;
+    Ok(rows.into_iter().map(row_to_map).collect())
+}
+
+fn escape_identifier(value: &str) -> String {
+    value.replace('`', "``")
+}
+
+fn row_to_map(row: Row) -> BTreeMap<String, JsonValue> {
+    let names = row
+        .columns_ref()
+        .iter()
+        .map(|column| column.name_str().to_string())
+        .collect::<Vec<_>>();
+    names
+        .into_iter()
+        .zip(row.unwrap())
+        .map(|(name, value)| (name, mysql_value_to_json(value)))
+        .collect()
+}
+
+fn mysql_value_to_json(value: Value) -> JsonValue {
+    match value {
+        Value::NULL => JsonValue::Null,
+        Value::Bytes(bytes) => JsonValue::String(String::from_utf8_lossy(&bytes).to_string()),
+        Value::Int(value) => JsonValue::Number(Number::from(value)),
+        Value::UInt(value) => JsonValue::Number(Number::from(value)),
+        Value::Float(value) => Number::from_f64(value as f64)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        Value::Double(value) => Number::from_f64(value)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        Value::Date(year, month, day, hour, minute, second, micros) => JsonValue::String(format!(
+            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{:06}",
+            micros
+        )),
+        Value::Time(is_negative, days, hours, minutes, seconds, micros) => {
+            JsonValue::String(format!(
+                "{}{} {:02}:{:02}:{:02}.{:06}",
+                if is_negative { "-" } else { "" },
+                days,
+                hours,
+                minutes,
+                seconds,
+                micros
+            ))
+        }
+    }
+}

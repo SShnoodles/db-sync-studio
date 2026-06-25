@@ -1,0 +1,289 @@
+use crate::db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection};
+use rusqlite::{params, Connection};
+use serde_json::Value;
+use std::{path::Path, sync::Mutex};
+
+pub struct LocalStore {
+    connection: Mutex<Connection>,
+}
+
+fn ensure_compare_history_sync_type(connection: &Connection) -> Result<(), String> {
+    let has_column = connection
+        .prepare("PRAGMA table_info(compare_history)")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .any(|column| column == "sync_type");
+
+    if !has_column {
+        connection
+            .execute(
+                "ALTER TABLE compare_history ADD COLUMN sync_type TEXT NOT NULL DEFAULT 'schema'",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    connection
+        .execute(
+            "UPDATE compare_history
+            SET sync_type = CASE WHEN task_id = 'data' THEN 'data' ELSE 'schema' END
+            WHERE sync_type IS NULL OR sync_type = '' OR sync_type = 'schema'",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+impl LocalStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
+        let connection = Connection::open(path).map_err(|error| error.to_string())?;
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS connections (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, config_json TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS compare_tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                source_connection_id TEXT NOT NULL,
+                target_connection_id TEXT NOT NULL,
+                compare_type TEXT NOT NULL,
+                config_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS compare_history (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                sync_type TEXT NOT NULL DEFAULT 'schema',
+                result_summary_json TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                report_path TEXT,
+                created_at TEXT NOT NULL
+            );",
+            )
+            .map_err(|error| error.to_string())?;
+        ensure_compare_history_sync_type(&connection)?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    pub fn list_connections(&self) -> Result<Vec<DbConnection>, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let mut statement = connection
+            .prepare("SELECT config_json FROM connections ORDER BY updated_at DESC")
+            .map_err(|error| error.to_string())?;
+        let items = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .map(|item| {
+                item.map_err(|error| error.to_string())
+                    .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string()))
+            })
+            .collect::<Result<Vec<DbConnection>, String>>()?;
+        Ok(items)
+    }
+
+    pub fn get_connection(&self, id: &str) -> Result<DbConnection, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let json: String = connection
+            .query_row(
+                "SELECT config_json FROM connections WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "Connection was not found".to_string())?;
+        serde_json::from_str(&json).map_err(|error| error.to_string())
+    }
+
+    pub fn save_connection(&self, item: &DbConnection) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let json = serde_json::to_string(item).map_err(|error| error.to_string())?;
+        connection.execute("INSERT INTO connections (id, name, config_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name, config_json = excluded.config_json, updated_at = excluded.updated_at",
+            params![item.id, item.name, json, item.created_at, item.updated_at]
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_connection(&self, id: &str) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        connection
+            .execute("DELETE FROM connections WHERE id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn list_tasks(&self) -> Result<Vec<CompareTask>, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let mut statement = connection
+            .prepare("SELECT config_json FROM compare_tasks ORDER BY updated_at DESC")
+            .map_err(|error| error.to_string())?;
+        let items = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .map(|item| {
+                item.map_err(|error| error.to_string())
+                    .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string()))
+            })
+            .collect::<Result<Vec<CompareTask>, String>>()?;
+        Ok(items)
+    }
+
+    pub fn get_task(&self, id: &str) -> Result<CompareTask, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let json: String = connection
+            .query_row(
+                "SELECT config_json FROM compare_tasks WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "Compare task was not found".to_string())?;
+        serde_json::from_str(&json).map_err(|error| error.to_string())
+    }
+
+    pub fn save_task(&self, task: &CompareTask) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let json = serde_json::to_string(task).map_err(|error| error.to_string())?;
+        connection.execute("INSERT INTO compare_tasks (id, name, source_connection_id, target_connection_id, compare_type, config_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name, source_connection_id = excluded.source_connection_id, target_connection_id = excluded.target_connection_id, compare_type = excluded.compare_type, config_json = excluded.config_json, updated_at = excluded.updated_at",
+            params![task.id, task.name, task.source_connection_id, task.target_connection_id, task.compare_type, json, task.created_at, task.updated_at]
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        connection
+            .execute("DELETE FROM compare_tasks WHERE id = ?1", [id])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn save_history(&self, run: &CompareRun) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let summary_json =
+            serde_json::to_string(&run.summary).map_err(|error| error.to_string())?;
+        let result_json = serde_json::to_string(run).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO compare_history (id, task_id, sync_type, result_summary_json, result_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![run.id, run.task_id, "schema", summary_json, result_json, run.created_at],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn save_data_history(&self, run: &DataCompareHistoryRun) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let summary_json =
+            serde_json::to_string(&run.summary).map_err(|error| error.to_string())?;
+        let result_json = serde_json::to_string(run).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO compare_history (id, task_id, sync_type, result_summary_json, result_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![run.id, run.run_type, "data", summary_json, result_json, run.created_at],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn list_history(
+        &self,
+        sync_type: Option<String>,
+        start_time: Option<String>,
+        end_time: Option<String>,
+    ) -> Result<Vec<Value>, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT result_json FROM compare_history
+                WHERE (?1 IS NULL OR sync_type = ?1)
+                AND (?2 IS NULL OR created_at >= ?2)
+                AND (?3 IS NULL OR created_at <= ?3)
+                ORDER BY created_at DESC",
+            )
+            .map_err(|error| error.to_string())?;
+        let items = statement
+            .query_map(params![sync_type, start_time, end_time], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| error.to_string())?
+            .map(|item| {
+                item.map_err(|error| error.to_string())
+                    .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string()))
+            })
+            .collect::<Result<Vec<Value>, String>>()?;
+        Ok(items)
+    }
+
+    pub fn delete_history(&self, ids: &[String]) -> Result<(), String> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        {
+            let mut statement = transaction
+                .prepare("DELETE FROM compare_history WHERE id = ?1")
+                .map_err(|error| error.to_string())?;
+            for id in ids {
+                statement.execute([id]).map_err(|error| error.to_string())?;
+            }
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn clear_history(&self) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        connection
+            .execute("DELETE FROM compare_history", [])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+}
