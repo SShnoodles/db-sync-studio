@@ -65,12 +65,10 @@ body {
   white-space: nowrap;
 }
 .brand-icon {
-  display: grid;
-  place-items: center;
   width: 24px;
   height: 24px;
   border-radius: 5px;
-  background: #1677ff;
+  object-fit: cover;
 }
 .app-sider .ant-menu-item {
   height: 34px;

@@ -308,9 +308,7 @@ function App() {
         <Layout className="app-layout" data-theme={themeMode}>
           <Layout.Sider width={208} className="app-sider" breakpoint="lg" collapsedWidth="0">
             <div className="brand">
-              <span className="brand-icon">
-                <SwapOutlined />
-              </span>
+              <img className="brand-icon" src="/app-icon.png" alt="DB Sync Studio" />
               <span>DB Sync Studio</span>
             </div>
             <Menu
