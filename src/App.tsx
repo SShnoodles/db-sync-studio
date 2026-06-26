@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { App as AntApp, Badge, ConfigProvider, Form, Layout, Menu, Modal, message, theme as antdTheme } from "antd";
+import { App as AntApp, ConfigProvider, Form, Layout, Menu, Modal, message, theme as antdTheme } from "antd";
 import type { MenuProps } from "antd";
 import { ApiOutlined, DatabaseOutlined, HistoryOutlined, SettingOutlined, SwapOutlined, TableOutlined } from "@ant-design/icons";
 import "antd/dist/reset.css";
@@ -117,7 +117,7 @@ function App() {
       const connection = {
         ...values,
         id: selectedId || values.id || crypto.randomUUID(),
-        dbType: "mysql" as const,
+        dbType: values.dbType || ("mysql" as const),
         createdAt: selected?.createdAt || values.createdAt || now(),
         updatedAt: now(),
       };
@@ -320,11 +320,6 @@ function App() {
               items={menuItems}
               onClick={({ key }) => setPage(key as Page)}
             />
-            <div className="sider-footer">
-              <div>
-                <Badge status="success" /> {t("common.localWorkspace")}
-              </div>
-            </div>
           </Layout.Sider>
           <Layout>
             <Layout.Content className="app-content">
@@ -413,6 +408,7 @@ function buildDataCompareHistory(runs: DataCompareRun[]): DataCompareHistoryRun 
   return {
     runType: "data",
     id: `${firstRun.sourceName} -> ${firstRun.targetName} @ ${createdAt}`,
+    dbType: firstRun.dbType,
     title: `${firstRun.sourceName} -> ${firstRun.targetName} @ ${createdAt}`,
     sourceName: firstRun.sourceName,
     targetName: firstRun.targetName,

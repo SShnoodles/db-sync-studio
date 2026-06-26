@@ -63,7 +63,7 @@ export function ConnectionsPage(props: {
                         <EnvironmentTag value={item.environment} />
                       </Space>
                     }
-                    description={`${item.username || "root"}@${item.host}:${item.port} · ${item.database}`}
+                    description={`${item.dbType} · ${item.username || defaultUsername(item.dbType)}@${item.host}:${item.port} · ${item.database}`}
                   />
                 </List.Item>
               )}
@@ -105,7 +105,18 @@ export function ConnectionsPage(props: {
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item label={t("connections.dbType")} name="dbType">
-                    <Select disabled options={[{ value: "mysql", label: t("common.mysql") }]} />
+                    <Select
+                      options={[
+                        { value: "mysql", label: t("common.mysql") },
+                        { value: "postgresql", label: t("common.postgresql") },
+                      ]}
+                      onChange={(value) => {
+                        props.form.setFieldsValue({
+                          port: value === "postgresql" ? 5432 : 3306,
+                          username: value === "postgresql" ? "postgres" : "root",
+                        });
+                      }}
+                    />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
@@ -173,4 +184,8 @@ export function ConnectionsPage(props: {
       </Row>
     </>
   );
+}
+
+function defaultUsername(dbType: DbConnection["dbType"]) {
+  return dbType === "postgresql" ? "postgres" : "root";
 }

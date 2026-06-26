@@ -181,9 +181,14 @@ function buildEntries(diffs: SchemaDiff[]): DiffEntry[] {
 }
 
 function sqlWithTableComments(entries: DiffEntry[]) {
-  const tableNames = Array.from(new Set(entries.map((entry) => entry.tableName))).sort();
-  return tableNames
-    .map((tableName) => {
+  const objectKeys = Array.from(new Set(entries.map((entry) => `${entry.objectType}:${entry.tableName}`))).sort((left, right) => {
+    const [leftType, leftName] = left.split(":");
+    const [rightType, rightName] = right.split(":");
+    return schemaObjectOrder(leftType) - schemaObjectOrder(rightType) || leftName.localeCompare(rightName);
+  });
+  return objectKeys
+    .map((objectKey) => {
+      const [objectType, tableName] = objectKey.split(":");
       const sections = ([
         ["added", "Added"],
         ["modified", "Modified"],
@@ -191,16 +196,22 @@ function sqlWithTableComments(entries: DiffEntry[]) {
       ] as const)
         .map(([diffType, label]) => {
           const statements = entries
-            .filter((entry) => entry.tableName === tableName && entry.diffType === diffType)
+            .filter((entry) => entry.objectType === objectType && entry.tableName === tableName && entry.diffType === diffType)
             .map((entry) => entry.syncSql)
             .filter(Boolean);
           return statements.length > 0 ? `-- ${label}: ${statements.length}\n${statements.join("\n")}` : "";
         })
         .filter(Boolean);
-      return sections.length > 0 ? `-- Table: ${tableName}\n${sections.join("\n")}` : "";
+      return sections.length > 0 ? `-- ${objectType === "type" ? "Type" : "Table"}: ${tableName}\n${sections.join("\n")}` : "";
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function schemaObjectOrder(objectType: string) {
+  if (objectType === "type") return 0;
+  if (objectType === "table" || objectType === "column") return 1;
+  return 2;
 }
 
 function buildTree(diffs: DiffEntry[], side: "source" | "target"): TreeDataNode[] {
@@ -224,7 +235,7 @@ function buildTree(diffs: DiffEntry[], side: "source" | "target"): TreeDataNode[
 
 function DiffNodeTitle({ diff, side }: { diff: SchemaDiff; side: "source" | "target" }) {
   const { t } = useI18n();
-  const label = diff.columnName || "(table)";
+  const label = diff.columnName || (diff.objectType === "type" ? "(type)" : "(table)");
   const value = side === "source" ? diff.sourceValue : diff.targetValue;
 
   return (

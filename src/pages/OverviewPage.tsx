@@ -1,5 +1,5 @@
 import { Button, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
-import { DatabaseOutlined, HistoryOutlined, PlusOutlined, SwapOutlined } from "@ant-design/icons";
+import { DatabaseOutlined, DiffOutlined, HistoryOutlined, PlusOutlined, TableOutlined } from "@ant-design/icons";
 
 import { useI18n } from "../i18n";
 import type { DbConnection, HistoryRun } from "../types";
@@ -18,6 +18,7 @@ export function OverviewPage({
   const { t } = useI18n();
   const schemaHistoryCount = history.filter((item) => !("runType" in item)).length;
   const dataHistoryCount = history.filter((item) => "runType" in item && item.runType === "data").length;
+  const historyCount = history.length;
 
   return (
     <>
@@ -34,21 +35,27 @@ export function OverviewPage({
         </Button>
       </section>
       <Row gutter={[12, 12]}>
-        <Col xs={24} md={8}>
+        <Col xs={24} md={6}>
           <Card>
             <Statistic title={t("overview.connections")} value={connections.length} prefix={<DatabaseOutlined />} />
             <Typography.Text type="secondary">{t("overview.savedMysqlEndpoints")}</Typography.Text>
           </Card>
         </Col>
-        <Col xs={24} md={8}>
+        <Col xs={24} md={6}>
           <Card>
-            <Statistic title={t("overview.schemaSyncRecords")} value={schemaHistoryCount} prefix={<SwapOutlined />} />
+            <Statistic title={t("overview.schemaSyncRecords")} value={schemaHistoryCount} prefix={<DiffOutlined />} />
             <Typography.Text type="secondary">{t("overview.schemaSyncRecords")}</Typography.Text>
           </Card>
         </Col>
-        <Col xs={24} md={8}>
+        <Col xs={24} md={6}>
           <Card>
-            <Statistic title={t("overview.dataSyncRecords")} value={dataHistoryCount} prefix={<HistoryOutlined />} />
+            <Statistic title={t("overview.dataSyncRecords")} value={dataHistoryCount} prefix={<TableOutlined />} />
+            <Typography.Text type="secondary">{t("overview.dataSyncRecords")}</Typography.Text>
+          </Card>
+        </Col>
+        <Col xs={24} md={6}>
+          <Card>
+            <Statistic title={t("overview.historyRecords")} value={historyCount} prefix={<HistoryOutlined />} />
             <Typography.Text type="secondary">{t("overview.history")}</Typography.Text>
           </Card>
         </Col>

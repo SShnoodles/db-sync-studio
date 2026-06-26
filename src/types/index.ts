@@ -1,7 +1,7 @@
 export type DbConnection = {
   id: string;
   name: string;
-  dbType: "mysql";
+  dbType: "mysql" | "postgresql";
   host?: string;
   port?: number;
   database: string;
@@ -13,7 +13,7 @@ export type DbConnection = {
   updatedAt: string;
 };
 
-export type TableMeta = { name: string; schema?: string; tableType: string };
+export type TableMeta = { name: string; schema?: string; tableType: string; comment?: string };
 
 export type DataSyncTableMeta = {
   name: string;
@@ -33,7 +33,7 @@ export type CompareTask = {
 };
 
 export type SchemaDiff = {
-  objectType: "table" | "column";
+  objectType: "table" | "column" | "type";
   tableName: string;
   columnName?: string;
   diffType: "added" | "removed" | "modified";
@@ -58,6 +58,7 @@ export type CompareSummary = {
 
 export type CompareRun = {
   id: string;
+  dbType?: DbConnection["dbType"];
   taskId: string;
   taskName: string;
   sourceName: string;
@@ -72,8 +73,10 @@ export type HistoryRun = CompareRun | DataCompareHistoryRun;
 
 export type HistoryFilter = {
   syncType?: "all" | "schema" | "data";
+  databaseType?: "all" | DbConnection["dbType"];
   startTime?: string;
   endTime?: string;
+  searchContent?: string;
 };
 
 export type DataCompareRequest = {
@@ -118,6 +121,7 @@ export type DataCompareSummary = {
 
 export type DataCompareRun = {
   id: string;
+  dbType?: DbConnection["dbType"];
   tableName: string;
   sourceName: string;
   targetName: string;
@@ -141,6 +145,7 @@ export type DataCompareHistorySummary = {
 export type DataCompareHistoryRun = {
   runType: "data";
   id: string;
+  dbType?: DbConnection["dbType"];
   title: string;
   sourceName: string;
   targetName: string;

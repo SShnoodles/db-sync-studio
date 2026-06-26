@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use crate::db::{
-    mysql, ChangedColumn, DataCompareRequest, DataCompareSummary, DataDiff, DbConnection,
+    self, ChangedColumn, DataCompareRequest, DataCompareSummary, DataDiff, DbConnection,
 };
 
 const ROW_LIMIT: usize = 5000;
@@ -13,7 +13,7 @@ pub fn compare_data(
     target: &DbConnection,
     request: &DataCompareRequest,
 ) -> Result<(Vec<String>, DataCompareSummary, Vec<DataDiff>, String), String> {
-    let key_columns = mysql::primary_keys(source, &request.table_name)?;
+    let key_columns = db::primary_keys(source, &request.table_name)?;
     if key_columns.is_empty() {
         return Err(
             "The selected table has no primary key. Manual business keys are not supported yet."
@@ -21,8 +21,22 @@ pub fn compare_data(
         );
     }
 
-    let source_rows = mysql::fetch_rows(source, &request.table_name, &key_columns, ROW_LIMIT)?;
-    let target_rows = mysql::fetch_rows(target, &request.table_name, &key_columns, ROW_LIMIT)?;
+    let source_columns = db::list_columns(source, &request.table_name)?;
+    let target_columns = db::list_columns(target, &request.table_name)?;
+    let target_column_map = target_columns
+        .iter()
+        .map(|column| (column.name.clone(), column.clone()))
+        .collect::<HashMap<_, _>>();
+    let source_column_order = source_columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    let target_column_order = target_columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    let source_rows = db::fetch_rows(source, &request.table_name, &key_columns, ROW_LIMIT)?;
+    let target_rows = db::fetch_rows(target, &request.table_name, &key_columns, ROW_LIMIT)?;
     let source_map = rows_by_key(&source_rows, &key_columns)?;
     let target_map = rows_by_key(&target_rows, &key_columns)?;
     let mut diffs = Vec::new();
@@ -30,16 +44,26 @@ pub fn compare_data(
 
     for (key, source_row) in &source_map {
         match target_map.get(key) {
-            None => diffs.push(insert_diff(&request.table_name, &key_columns, source_row)),
+            None => diffs.push(insert_diff(
+                target,
+                &request.table_name,
+                &key_columns,
+                source_row,
+                &target_column_order,
+                &target_column_map,
+            )),
             Some(target_row) => {
-                let changes = changed_columns(source_row, target_row, &key_columns);
+                let changes =
+                    changed_columns(source_row, target_row, &key_columns, &source_column_order);
                 if !changes.is_empty() {
                     diffs.push(update_diff(
                         &request.table_name,
+                        target,
                         &key_columns,
                         source_row,
                         target_row,
                         changes,
+                        &target_column_map,
                     ));
                 } else {
                     same_rows += 1;
@@ -55,6 +79,8 @@ pub fn compare_data(
                 &key_columns,
                 target_row,
                 request.allow_delete,
+                target,
+                &target_column_map,
             ));
         }
     }
@@ -98,9 +124,12 @@ fn rows_by_key(
 }
 
 fn insert_diff(
+    target: &DbConnection,
     table_name: &str,
     key_columns: &[String],
     source_row: &BTreeMap<String, Value>,
+    column_order: &[String],
+    column_map: &HashMap<String, db::ColumnMeta>,
 ) -> DataDiff {
     DataDiff {
         table_name: table_name.into(),
@@ -109,16 +138,24 @@ fn insert_diff(
         source_row: Some(row_pairs(source_row)),
         target_row: None,
         changed_columns: Vec::new(),
-        sync_sql: Some(insert_sql(table_name, source_row)),
+        sync_sql: Some(insert_sql(
+            target,
+            table_name,
+            source_row,
+            column_order,
+            column_map,
+        )),
     }
 }
 
 fn update_diff(
     table_name: &str,
+    target: &DbConnection,
     key_columns: &[String],
     source_row: &BTreeMap<String, Value>,
     target_row: &BTreeMap<String, Value>,
     changed_columns: Vec<ChangedColumn>,
+    column_map: &HashMap<String, db::ColumnMeta>,
 ) -> DataDiff {
     DataDiff {
         table_name: table_name.into(),
@@ -127,10 +164,12 @@ fn update_diff(
         source_row: Some(row_pairs(source_row)),
         target_row: Some(row_pairs(target_row)),
         sync_sql: Some(update_sql(
+            target,
             table_name,
             key_columns,
             source_row,
             &changed_columns,
+            column_map,
         )),
         changed_columns,
     }
@@ -141,6 +180,8 @@ fn delete_diff(
     key_columns: &[String],
     target_row: &BTreeMap<String, Value>,
     allow_delete: bool,
+    target: &DbConnection,
+    column_map: &HashMap<String, db::ColumnMeta>,
 ) -> DataDiff {
     DataDiff {
         table_name: table_name.into(),
@@ -149,7 +190,8 @@ fn delete_diff(
         source_row: None,
         target_row: Some(row_pairs(target_row)),
         changed_columns: Vec::new(),
-        sync_sql: allow_delete.then(|| delete_sql(table_name, key_columns, target_row)),
+        sync_sql: allow_delete
+            .then(|| delete_sql(target, table_name, key_columns, target_row, column_map)),
     }
 }
 
@@ -157,11 +199,13 @@ fn changed_columns(
     source_row: &BTreeMap<String, Value>,
     target_row: &BTreeMap<String, Value>,
     key_columns: &[String],
+    column_order: &[String],
 ) -> Vec<ChangedColumn> {
-    source_row
+    column_order
         .iter()
-        .filter(|(column, _)| !key_columns.contains(column))
-        .filter_map(|(column, source_value)| {
+        .filter(|column| !key_columns.contains(column))
+        .filter_map(|column| {
+            let source_value = source_row.get(column).unwrap_or(&Value::Null);
             let target_value = target_row.get(column).unwrap_or(&Value::Null);
             (source_value != target_value).then(|| ChangedColumn {
                 column_name: column.clone(),
@@ -202,74 +246,129 @@ fn row_pairs(row: &BTreeMap<String, Value>) -> Vec<(String, Value)> {
         .collect()
 }
 
-fn insert_sql(table_name: &str, row: &BTreeMap<String, Value>) -> String {
-    let columns = row
-        .keys()
-        .map(|column| format!("`{}`", escape_identifier(column)))
+fn insert_sql(
+    target: &DbConnection,
+    table_name: &str,
+    row: &BTreeMap<String, Value>,
+    column_order: &[String],
+    column_map: &HashMap<String, db::ColumnMeta>,
+) -> String {
+    let selected_columns = column_order
+        .iter()
+        .filter(|column| row.contains_key(*column))
+        .collect::<Vec<_>>();
+    let columns = selected_columns
+        .iter()
+        .map(|column| db::quote_identifier(target, column))
         .collect::<Vec<_>>()
         .join(", ");
-    let values = row.values().map(sql_value).collect::<Vec<_>>().join(", ");
-    format!(
-        "INSERT INTO `{}` ({columns}) VALUES ({values});",
-        escape_identifier(table_name)
-    )
-}
-
-fn update_sql(
-    table_name: &str,
-    key_columns: &[String],
-    source_row: &BTreeMap<String, Value>,
-    changed_columns: &[ChangedColumn],
-) -> String {
-    let sets = changed_columns
+    let values = selected_columns
         .iter()
-        .map(|change| {
-            format!(
-                "`{}` = {}",
-                escape_identifier(&change.column_name),
-                sql_value(&change.source_value)
+        .map(|column| {
+            sql_value(
+                target,
+                row.get(*column).unwrap_or(&Value::Null),
+                column_map.get(*column),
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "UPDATE `{}` SET {sets} WHERE {};",
-        escape_identifier(table_name),
-        where_clause(key_columns, source_row)
+        "INSERT INTO {} ({columns}) VALUES ({values});",
+        db::quote_identifier(target, table_name)
+    )
+}
+
+fn update_sql(
+    target: &DbConnection,
+    table_name: &str,
+    key_columns: &[String],
+    source_row: &BTreeMap<String, Value>,
+    changed_columns: &[ChangedColumn],
+    column_map: &HashMap<String, db::ColumnMeta>,
+) -> String {
+    let sets = changed_columns
+        .iter()
+        .map(|change| {
+            format!(
+                "{} = {}",
+                db::quote_identifier(target, &change.column_name),
+                sql_value(
+                    target,
+                    &change.source_value,
+                    column_map.get(&change.column_name),
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "UPDATE {} SET {sets} WHERE {};",
+        db::quote_identifier(target, table_name),
+        where_clause(target, key_columns, source_row, column_map)
     )
 }
 
 fn delete_sql(
+    target: &DbConnection,
     table_name: &str,
     key_columns: &[String],
     target_row: &BTreeMap<String, Value>,
+    column_map: &HashMap<String, db::ColumnMeta>,
 ) -> String {
     format!(
-        "DELETE FROM `{}` WHERE {};",
-        escape_identifier(table_name),
-        where_clause(key_columns, target_row)
+        "DELETE FROM {} WHERE {};",
+        db::quote_identifier(target, table_name),
+        where_clause(target, key_columns, target_row, column_map)
     )
 }
 
-fn where_clause(key_columns: &[String], row: &BTreeMap<String, Value>) -> String {
+fn where_clause(
+    target: &DbConnection,
+    key_columns: &[String],
+    row: &BTreeMap<String, Value>,
+    column_map: &HashMap<String, db::ColumnMeta>,
+) -> String {
     key_columns
         .iter()
         .map(|column| {
             format!(
-                "`{}` <=> {}",
-                escape_identifier(column),
-                sql_value(row.get(column).unwrap_or(&Value::Null))
+                "{} {} {}",
+                db::quote_identifier(target, column),
+                db::null_safe_eq_operator(target),
+                sql_value(
+                    target,
+                    row.get(column).unwrap_or(&Value::Null),
+                    column_map.get(column),
+                )
             )
         })
         .collect::<Vec<_>>()
         .join(" AND ")
 }
 
-fn sql_value(value: &Value) -> String {
+fn sql_value(target: &DbConnection, value: &Value, column: Option<&db::ColumnMeta>) -> String {
+    if target.db_type == "postgresql" {
+        if let Some(column) = column {
+            return postgres_sql_value(value, &column.column_type);
+        }
+    }
+    if target.db_type == "mysql" {
+        if let Some(column) = column {
+            return mysql_sql_value(value, column);
+        }
+    }
+
     match value {
         Value::Null => "NULL".into(),
         Value::Bool(value) => {
-            if *value {
+            if target.db_type == "postgresql" {
+                if *value {
+                    "TRUE".into()
+                } else {
+                    "FALSE".into()
+                }
+            } else if *value {
                 "1".into()
             } else {
                 "0".into()
@@ -283,13 +382,221 @@ fn sql_value(value: &Value) -> String {
     }
 }
 
+fn mysql_sql_value(value: &Value, column: &db::ColumnMeta) -> String {
+    match value {
+        Value::Null => "NULL".into(),
+        Value::Bool(value) => {
+            if *value {
+                "1".into()
+            } else {
+                "0".into()
+            }
+        }
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => quoted_mysql_string(&value.to_string()),
+        Value::String(value) => {
+            let lower_type = column.column_type.to_ascii_lowercase();
+            if is_mysql_bit_type(&lower_type) {
+                mysql_bit_literal(value)
+            } else if is_mysql_binary_type(&lower_type) {
+                mysql_hex_literal(value)
+            } else if is_mysql_spatial_type(&lower_type) {
+                mysql_spatial_literal(value, column.spatial_srid)
+            } else if is_mysql_number_type(&lower_type) && is_plain_number(value) {
+                value.clone()
+            } else {
+                quoted_mysql_string(value)
+            }
+        }
+    }
+}
+
+fn mysql_spatial_literal(value: &str, spatial_srid: Option<u32>) -> String {
+    let wkb = mysql_hex_literal(value);
+    match spatial_srid {
+        Some(srid) => format!("ST_GeomFromWKB({wkb}, {srid})"),
+        None => format!("ST_GeomFromWKB({wkb})"),
+    }
+}
+
+fn quoted_mysql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+}
+
+fn mysql_hex_literal(value: &str) -> String {
+    let hex = value
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .collect::<String>();
+    if hex.is_empty() {
+        "X''".into()
+    } else {
+        format!("X'{}'", hex.to_ascii_uppercase())
+    }
+}
+
+fn mysql_bit_literal(value: &str) -> String {
+    let hex = value
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .collect::<String>();
+    if hex.is_empty() {
+        return "b''".into();
+    }
+    let bits = hex
+        .as_bytes()
+        .chunks(2)
+        .filter_map(|chunk| std::str::from_utf8(chunk).ok())
+        .filter_map(|chunk| u8::from_str_radix(chunk, 16).ok())
+        .map(|byte| format!("{byte:08b}"))
+        .collect::<Vec<_>>()
+        .join("");
+    format!("b'{bits}'")
+}
+
+fn is_plain_number(value: &str) -> bool {
+    value.parse::<i128>().is_ok() || value.parse::<f64>().is_ok()
+}
+
+fn is_mysql_number_type(column_type: &str) -> bool {
+    let base_type = mysql_base_type(column_type);
+    matches!(
+        base_type.as_str(),
+        "tinyint"
+            | "smallint"
+            | "mediumint"
+            | "int"
+            | "integer"
+            | "bigint"
+            | "decimal"
+            | "numeric"
+            | "float"
+            | "double"
+            | "real"
+            | "year"
+    )
+}
+
+fn is_mysql_bit_type(column_type: &str) -> bool {
+    mysql_base_type(column_type) == "bit"
+}
+
+fn is_mysql_binary_type(column_type: &str) -> bool {
+    matches!(
+        mysql_base_type(column_type).as_str(),
+        "binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob"
+    )
+}
+
+fn is_mysql_spatial_type(column_type: &str) -> bool {
+    matches!(
+        mysql_base_type(column_type).as_str(),
+        "geometry"
+            | "point"
+            | "linestring"
+            | "polygon"
+            | "multipoint"
+            | "multilinestring"
+            | "multipolygon"
+            | "geometrycollection"
+    )
+}
+
+fn mysql_base_type(column_type: &str) -> String {
+    column_type
+        .split(|character: char| character == '(' || character.is_whitespace())
+        .next()
+        .unwrap_or(column_type)
+        .to_string()
+}
+
+fn postgres_sql_value(value: &Value, column_type: &str) -> String {
+    match value {
+        Value::Null => "NULL".into(),
+        Value::Array(items) => postgres_array_literal(items, column_type),
+        Value::Object(_) => format!(
+            "{}::{}",
+            quoted_postgres_string(&value.to_string()),
+            column_type
+        ),
+        Value::Bool(value) => {
+            let literal = if *value { "TRUE" } else { "FALSE" };
+            cast_postgres_literal(literal.into(), column_type)
+        }
+        Value::Number(value) => cast_postgres_literal(value.to_string(), column_type),
+        Value::String(value) => {
+            if is_plain_postgres_string_type(column_type) {
+                quoted_postgres_string(value)
+            } else {
+                format!("{}::{}", quoted_postgres_string(value), column_type)
+            }
+        }
+    }
+}
+
+fn postgres_array_literal(items: &[Value], column_type: &str) -> String {
+    let values = items
+        .iter()
+        .map(|item| match item {
+            Value::Null => "NULL".into(),
+            Value::Bool(value) => {
+                if *value {
+                    "TRUE".into()
+                } else {
+                    "FALSE".into()
+                }
+            }
+            Value::Number(value) => value.to_string(),
+            Value::String(value) => quoted_postgres_string(value),
+            Value::Array(_) | Value::Object(_) => quoted_postgres_string(&item.to_string()),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{values}]::{column_type}")
+}
+
+fn cast_postgres_literal(literal: String, column_type: &str) -> String {
+    if is_plain_postgres_number_type(column_type) || column_type == "boolean" {
+        literal
+    } else {
+        format!("{literal}::{column_type}")
+    }
+}
+
+fn quoted_postgres_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn is_plain_postgres_string_type(column_type: &str) -> bool {
+    column_type == "text"
+        || column_type.starts_with("character varying")
+        || column_type.starts_with("character(")
+        || column_type.starts_with("char(")
+        || column_type == "name"
+}
+
+fn is_plain_postgres_number_type(column_type: &str) -> bool {
+    matches!(
+        column_type,
+        "smallint"
+            | "integer"
+            | "bigint"
+            | "smallserial"
+            | "serial"
+            | "bigserial"
+            | "real"
+            | "double precision"
+            | "numeric"
+            | "decimal"
+            | "money"
+            | "oid"
+    ) || column_type.starts_with("numeric(")
+        || column_type.starts_with("decimal(")
+}
+
 fn value_key(value: &Value) -> String {
     match value {
         Value::Null => "<NULL>".into(),
         _ => value.to_string(),
     }
-}
-
-fn escape_identifier(value: &str) -> String {
-    value.replace('`', "``")
 }

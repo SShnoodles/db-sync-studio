@@ -1,54 +1,67 @@
 # DB Sync Studio
 
-本地数据库同步工具，基于 Tauri + React + Ant Design。
+Local-first database schema and data comparison tool built with Tauri, React, and Ant Design.
 
-## 功能
+[中文文档](./README.zh-CN.md)
 
-- MySQL 连接管理：本地保存、测试连接
-- 结构同步：选择源库/目标库，勾选数据表，比较表和字段差异
-- 数据同步：多表比较，按 Insert / Update / Delete / Same 展示结果
-- SQL 预览：按表、操作类型分组，带行号和高亮
-- 历史记录：保存结构同步和数据同步记录，支持类型和时间筛选
-- 设置：中英文切换、浅色/深色主题
+## Features
 
-## 开发
+- MySQL and PostgreSQL connection management
+- Schema sync comparison for tables, columns, comments, and PostgreSQL enum types
+- Data sync comparison across multiple tables
+- Insert / Update / Delete / Same result summary
+- SQL preview grouped by table and operation type
+- Line numbers and syntax highlighting for generated SQL
+- Local comparison history with sync type, database type, time range, and content search
+- English / Chinese UI
+- Light / dark theme
+
+## Development
+
+Install dependencies:
 
 ```bash
 pnpm install
+```
+
+Start the frontend:
+
+```bash
 pnpm dev
 ```
 
-启动 Tauri：
+Start the Tauri app:
 
 ```bash
 pnpm tauri dev
 ```
 
-构建前端：
+Build the frontend:
 
 ```bash
 pnpm build
 ```
 
-检查 Rust：
+Check Rust:
 
 ```bash
 cd src-tauri
 cargo check
 ```
 
-## 本地数据
+## Local data
 
-连接配置和比较历史保存在应用本地 SQLite 中，不上传远端。
+Connection settings and comparison history are stored locally in SQLite. They are not uploaded to any remote service.
 
-macOS 默认路径：
+Default macOS path:
 
 ```text
 ~/Library/Application Support/cc.ssnoodles.db-sync-studio/db-sync-studio.sqlite
 ```
 
-## 当前限制
+## Current limits
 
-- 当前仅支持 MySQL
-- 数据同步依赖主键比较
-- SQL 只生成预览，不直接执行
+- Source and target must use the same database type.
+- Data sync requires primary keys.
+- Generated SQL is preview-only; the app does not execute synchronization SQL.
+- Large table comparison is limited by the current row fetch limit.

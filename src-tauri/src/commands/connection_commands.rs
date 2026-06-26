@@ -24,12 +24,12 @@ pub fn delete_connection(id: String, store: State<'_, LocalStore>) -> Result<(),
 
 #[tauri::command]
 pub fn test_connection(connection: db::DbConnection) -> Result<String, String> {
-    let detail = db::mysql::test_connection(&connection)?;
+    let detail = db::test_connection(&connection)?;
     Ok(detail)
 }
 
 #[tauri::command]
 pub fn list_tables(id: String, store: State<'_, LocalStore>) -> Result<Vec<db::TableMeta>, String> {
     let connection = store.get_connection(&id)?;
-    db::mysql::list_tables(&connection)
+    db::list_tables(&connection)
 }

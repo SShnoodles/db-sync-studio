@@ -43,11 +43,12 @@ pub fn list_task_tables(
 ) -> Result<Vec<String>, String> {
     let source = store.get_connection(&source_id)?;
     let target = store.get_connection(&target_id)?;
-    let mut names = db::mysql::list_tables(&source)?
+    db::ensure_same_db_type(&source, &target)?;
+    let mut names = db::list_tables(&source)?
         .into_iter()
         .map(|table| table.name)
         .chain(
-            db::mysql::list_tables(&target)?
+            db::list_tables(&target)?
                 .into_iter()
                 .map(|table| table.name),
         )
@@ -65,11 +66,12 @@ pub fn list_data_sync_tables(
 ) -> Result<Vec<db::DataSyncTableMeta>, String> {
     let source = store.get_connection(&source_id)?;
     let target = store.get_connection(&target_id)?;
-    let source_names = db::mysql::list_tables(&source)?
+    db::ensure_same_db_type(&source, &target)?;
+    let source_names = db::list_tables(&source)?
         .into_iter()
         .map(|table| table.name)
         .collect::<HashSet<_>>();
-    let target_names = db::mysql::list_tables(&target)?
+    let target_names = db::list_tables(&target)?
         .into_iter()
         .map(|table| table.name)
         .collect::<HashSet<_>>();
@@ -97,10 +99,12 @@ pub fn run_schema_compare(
     task.validate()?;
     let source = store.get_connection(&task.source_connection_id)?;
     let target = store.get_connection(&task.target_connection_id)?;
+    db::ensure_same_db_type(&source, &target)?;
     let diffs = diff::compare_schema(&source, &target, &task.selected_tables)?;
     let sync_sql = schema_sync_sql(&diffs);
     let run = CompareRun {
         id: Uuid::new_v4().to_string(),
+        db_type: Some(source.db_type.clone()),
         task_id: task.id.clone(),
         task_name: task.name.clone(),
         source_name: source.name,
@@ -122,6 +126,7 @@ pub fn run_schema_compare_once(
     task.validate()?;
     let source = store.get_connection(&task.source_connection_id)?;
     let target = store.get_connection(&task.target_connection_id)?;
+    db::ensure_same_db_type(&source, &target)?;
     let diffs = diff::compare_schema(&source, &target, &task.selected_tables)?;
     let sync_sql = schema_sync_sql(&diffs);
     let created_at = Utc::now().to_rfc3339();
@@ -132,6 +137,7 @@ pub fn run_schema_compare_once(
             "{} -> {} @ {}",
             source.database, target.database, created_at
         ),
+        db_type: Some(source.db_type.clone()),
         task_id: task.id,
         task_name: format!("{source_label} -> {target_label} @ {created_at}"),
         source_name: source_label,
@@ -148,15 +154,30 @@ pub fn run_schema_compare_once(
 #[tauri::command]
 pub fn list_compare_history(
     sync_type: Option<String>,
+    database_type: Option<String>,
     start_time: Option<String>,
     end_time: Option<String>,
+    search_content: Option<String>,
     store: State<'_, LocalStore>,
 ) -> Result<Vec<Value>, String> {
     let sync_type = match sync_type.as_deref() {
         Some("schema") | Some("data") => sync_type,
         _ => None,
     };
-    store.list_history(sync_type, start_time, end_time)
+    let database_type = match database_type.as_deref() {
+        Some("mysql") | Some("postgresql") => database_type,
+        _ => None,
+    };
+    let search_content = search_content
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    store.list_history(
+        sync_type,
+        database_type,
+        start_time,
+        end_time,
+        search_content,
+    )
 }
 
 #[tauri::command]
@@ -189,6 +210,7 @@ pub fn run_data_compare(
     request.validate()?;
     let source = store.get_connection(&request.source_connection_id)?;
     let target = store.get_connection(&request.target_connection_id)?;
+    db::ensure_same_db_type(&source, &target)?;
     let (key_columns, summary, diffs, _) =
         diff::data_diff::compare_data(&source, &target, &request)?;
     let sync_sql = data_sync_sql(&diffs);
@@ -198,6 +220,7 @@ pub fn run_data_compare(
             "{} -> {}.{} @ {}",
             source.database, target.database, request.table_name, created_at
         ),
+        db_type: Some(source.db_type.clone()),
         table_name: request.table_name,
         source_name: format!("{} ({})", source.name, source.database),
         target_name: format!("{} ({})", target.name, target.database),
@@ -246,17 +269,23 @@ fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {
 }
 
 fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
-    let mut table_names = diffs
+    let mut object_keys = diffs
         .iter()
         .filter(|diff| diff.sync_sql.is_some())
-        .map(|diff| diff.table_name.clone())
+        .map(|diff| (diff.object_type.clone(), diff.table_name.clone()))
         .collect::<Vec<_>>();
-    table_names.sort();
-    table_names.dedup();
+    object_keys.sort_by(|left, right| {
+        let left_order = schema_object_order(&left.0);
+        let right_order = schema_object_order(&right.0);
+        left_order
+            .cmp(&right_order)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    object_keys.dedup();
 
-    table_names
+    object_keys
         .into_iter()
-        .filter_map(|table_name| {
+        .filter_map(|(object_type, object_name)| {
             let sections = [
                 ("added", "Added"),
                 ("modified", "Modified"),
@@ -266,7 +295,11 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
             .filter_map(|(diff_type, label)| {
                 let statements = diffs
                     .iter()
-                    .filter(|diff| diff.table_name == table_name && diff.diff_type == diff_type)
+                    .filter(|diff| {
+                        diff.object_type == object_type
+                            && diff.table_name == object_name
+                            && diff.diff_type == diff_type
+                    })
                     .filter_map(|diff| diff.sync_sql.as_deref())
                     .collect::<Vec<_>>();
                 (!statements.is_empty()).then(|| {
@@ -278,11 +311,24 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
                 })
             })
             .collect::<Vec<_>>();
+            let object_label = if object_type == "type" {
+                "Type"
+            } else {
+                "Table"
+            };
             (!sections.is_empty())
-                .then(|| format!("-- Table: {table_name}\n{}", sections.join("\n")))
+                .then(|| format!("-- {object_label}: {object_name}\n{}", sections.join("\n")))
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn schema_object_order(object_type: &str) -> u8 {
+    match object_type {
+        "type" => 0,
+        "table" | "column" => 1,
+        _ => 2,
+    }
 }
 
 fn data_sync_sql(diffs: &[db::DataDiff]) -> String {

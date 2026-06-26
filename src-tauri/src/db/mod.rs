@@ -1,7 +1,9 @@
 pub mod mysql;
+pub mod postgres;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,8 +27,8 @@ impl DbConnection {
         if self.name.trim().is_empty() {
             return Err("Connection name is required".into());
         }
-        if self.db_type != "mysql" {
-            return Err("This first version supports MySQL connections only".into());
+        if !matches!(self.db_type.as_str(), "mysql" | "postgresql") {
+            return Err("Supported database types are MySQL and PostgreSQL".into());
         }
         if self.host.as_deref().unwrap_or("").trim().is_empty() {
             return Err("Host is required".into());
@@ -38,12 +40,87 @@ impl DbConnection {
     }
 }
 
+pub fn ensure_same_db_type(source: &DbConnection, target: &DbConnection) -> Result<(), String> {
+    if source.db_type != target.db_type {
+        return Err("Source and target must use the same database type".into());
+    }
+    Ok(())
+}
+
+pub fn test_connection(connection: &DbConnection) -> Result<String, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::test_connection(connection),
+        "postgresql" => postgres::test_connection(connection),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn list_tables(connection: &DbConnection) -> Result<Vec<TableMeta>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::list_tables(connection),
+        "postgresql" => postgres::list_tables(connection),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<ColumnMeta>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::list_columns(connection, table),
+        "postgresql" => postgres::list_columns(connection, table),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<String, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::show_create_table(connection, table),
+        "postgresql" => postgres::show_create_table(connection, table),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::primary_keys(connection, table),
+        "postgresql" => postgres::primary_keys(connection, table),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn fetch_rows(
+    connection: &DbConnection,
+    table: &str,
+    order_columns: &[String],
+    limit: usize,
+) -> Result<Vec<BTreeMap<String, Value>>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::fetch_rows(connection, table, order_columns, limit),
+        "postgresql" => postgres::fetch_rows(connection, table, order_columns, limit),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn quote_identifier(connection: &DbConnection, value: &str) -> String {
+    match connection.db_type.as_str() {
+        "postgresql" => postgres::quote_identifier(value),
+        _ => format!("`{}`", value.replace('`', "``")),
+    }
+}
+
+pub fn null_safe_eq_operator(connection: &DbConnection) -> &'static str {
+    match connection.db_type.as_str() {
+        "postgresql" => "IS NOT DISTINCT FROM",
+        _ => "<=>",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TableMeta {
     pub name: String,
     pub schema: Option<String>,
     pub table_type: String,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +142,15 @@ pub struct ColumnMeta {
     pub is_primary_key: bool,
     pub extra: Option<String>,
     pub ordinal_position: u64,
+    pub comment: Option<String>,
+    pub spatial_srid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeMeta {
+    pub name: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +251,7 @@ pub struct DataCompareSummary {
 #[serde(rename_all = "camelCase")]
 pub struct DataCompareRun {
     pub id: String,
+    pub db_type: Option<String>,
     pub table_name: String,
     pub source_name: String,
     pub target_name: String,
@@ -192,6 +279,7 @@ pub struct DataCompareHistorySummary {
 pub struct DataCompareHistoryRun {
     pub run_type: String,
     pub id: String,
+    pub db_type: Option<String>,
     pub title: String,
     pub source_name: String,
     pub target_name: String,
@@ -233,6 +321,7 @@ pub struct CompareSummary {
 #[serde(rename_all = "camelCase")]
 pub struct CompareRun {
     pub id: String,
+    pub db_type: Option<String>,
     pub task_id: String,
     pub task_name: String,
     pub source_name: String,

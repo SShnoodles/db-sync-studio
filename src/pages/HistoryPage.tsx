@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Pagination, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
+import { Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Input, Pagination, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 
 import { DiffTable, SqlPreview, SummaryStats } from "../components/schemaCompare";
@@ -9,6 +9,7 @@ import { formatDate } from "../utils/format";
 
 const pageSize = 3;
 type HistoryTypeFilter = "all" | "schema" | "data";
+type DatabaseTypeFilter = "all" | "mysql" | "postgresql";
 type TimeRange = Parameters<NonNullable<React.ComponentProps<typeof DatePicker.RangePicker>["onChange"]>>[0];
 
 export function HistoryPage({
@@ -28,7 +29,9 @@ export function HistoryPage({
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<HistoryTypeFilter>("all");
+  const [databaseTypeFilter, setDatabaseTypeFilter] = useState<DatabaseTypeFilter>("all");
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
+  const [searchContent, setSearchContent] = useState("");
   const pageItems = useMemo(
     () => history.slice((page - 1) * pageSize, page * pageSize),
     [history, page],
@@ -68,8 +71,10 @@ export function HistoryPage({
     setSelectedIds([]);
     onSearch({
       syncType: typeFilter,
+      databaseType: databaseTypeFilter,
       startTime: timeRange?.[0]?.startOf("day").toISOString(),
       endTime: timeRange?.[1]?.endOf("day").toISOString(),
+      searchContent: searchContent.trim() || undefined,
     });
   };
 
@@ -99,11 +104,35 @@ export function HistoryPage({
             />
           </Space>
           <Space size={6}>
+            <Typography.Text type="secondary">{t("history.databaseType")}</Typography.Text>
+            <Select
+              value={databaseTypeFilter}
+              className="history-filter-select"
+              onChange={setDatabaseTypeFilter}
+              options={[
+                { value: "all", label: t("history.allDatabaseTypes") },
+                { value: "mysql", label: "MySQL" },
+                { value: "postgresql", label: "PostgreSQL" },
+              ]}
+            />
+          </Space>
+          <Space size={6}>
             <Typography.Text type="secondary">{t("history.timeRange")}</Typography.Text>
             <DatePicker.RangePicker
               value={timeRange}
               onChange={setTimeRange}
               allowClear
+            />
+          </Space>
+          <Space size={6}>
+            <Typography.Text type="secondary">{t("history.searchContent")}</Typography.Text>
+            <Input
+              allowClear
+              className="history-search-input"
+              value={searchContent}
+              placeholder={t("history.searchPlaceholder")}
+              onChange={(event) => setSearchContent(event.target.value)}
+              onPressEnter={submitSearch}
             />
           </Space>
           <Button type="primary" onClick={submitSearch}>
@@ -153,6 +182,7 @@ export function HistoryPage({
                     <Tag color={isDataHistory(run) ? "purple" : "blue"}>
                       {isDataHistory(run) ? t("menu.dataSync") : t("menu.schemaSync")}
                     </Tag>
+                    {run.dbType && <Tag color="geekblue">{dbTypeLabel(run.dbType)}</Tag>}
                   </Space>
                 }
                 extra={
@@ -166,6 +196,7 @@ export function HistoryPage({
                   column={3}
                   items={[
                     { key: "time", label: t("common.time"), children: formatDate(run.createdAt) },
+                    { key: "dbType", label: t("history.databaseType"), children: run.dbType ? dbTypeLabel(run.dbType) : "-" },
                     { key: "source", label: t("common.source"), children: run.sourceName },
                     { key: "target", label: t("common.target"), children: run.targetName },
                   ]}
@@ -201,6 +232,10 @@ export function HistoryPage({
       )}
     </div>
   );
+}
+
+function dbTypeLabel(dbType: string) {
+  return dbType === "postgresql" ? "PostgreSQL" : "MySQL";
 }
 
 function isDataHistory(run: HistoryRun): run is Extract<HistoryRun, { runType: "data" }> {

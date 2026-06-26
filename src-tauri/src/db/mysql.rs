@@ -1,6 +1,6 @@
 use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, Value};
 use serde_json::{Number, Value as JsonValue};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{ColumnMeta, DbConnection, TableMeta};
 
@@ -44,6 +44,7 @@ pub fn list_tables(connection: &DbConnection) -> Result<Vec<TableMeta>, String> 
             name,
             schema: Some(connection.database.clone()),
             table_type,
+            comment: None,
         })
         .collect())
 }
@@ -54,7 +55,7 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
         .get_conn()
         .map_err(|error| format!("Connection failed: {error}"))?;
     conn.exec_map(
-        "SELECT table_name, column_name, column_type, is_nullable, column_default, column_key, extra, ordinal_position
+        "SELECT table_name, column_name, column_type, is_nullable, column_default, column_key, extra, ordinal_position, srs_id
          FROM information_schema.columns
          WHERE table_schema = DATABASE() AND table_name = ?
          ORDER BY ordinal_position",
@@ -68,7 +69,18 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
             column_key,
             extra,
             ordinal_position,
-        ): (String, String, String, String, Option<String>, String, String, u64)| {
+            spatial_srid,
+        ): (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            u64,
+            Option<u32>,
+        )| {
             ColumnMeta {
                 table_name,
                 name,
@@ -78,6 +90,8 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
                 is_primary_key: column_key == "PRI",
                 extra: if extra.is_empty() { None } else { Some(extra) },
                 ordinal_position,
+                comment: None,
+                spatial_srid,
             }
         },
     )
@@ -119,6 +133,23 @@ pub fn fetch_rows(
     order_columns: &[String],
     limit: usize,
 ) -> Result<Vec<BTreeMap<String, JsonValue>>, String> {
+    let columns = list_columns(connection, table)?;
+    let column_types = columns
+        .iter()
+        .map(|column| (column.name.clone(), column.column_type.clone()))
+        .collect::<HashMap<_, _>>();
+    let select_list = columns
+        .into_iter()
+        .map(|column| {
+            let escaped_name = escape_identifier(&column.name);
+            if is_spatial_type(&column.column_type) {
+                format!("ST_AsWKB(`{escaped_name}`) AS `{escaped_name}`")
+            } else {
+                format!("`{escaped_name}`")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let pool = pool(connection)?;
     let mut conn = pool
         .get_conn()
@@ -136,18 +167,21 @@ pub fn fetch_rows(
                 .join(", ")
         )
     };
-    let sql = format!("SELECT * FROM `{escaped_table}`{order_by} LIMIT {limit}");
+    let sql = format!("SELECT {select_list} FROM `{escaped_table}`{order_by} LIMIT {limit}");
     let rows: Vec<Row> = conn
         .query(sql)
         .map_err(|error| format!("Unable to fetch rows from {table}: {error}"))?;
-    Ok(rows.into_iter().map(row_to_map).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| row_to_map(row, &column_types))
+        .collect())
 }
 
 fn escape_identifier(value: &str) -> String {
     value.replace('`', "``")
 }
 
-fn row_to_map(row: Row) -> BTreeMap<String, JsonValue> {
+fn row_to_map(row: Row, column_types: &HashMap<String, String>) -> BTreeMap<String, JsonValue> {
     let names = row
         .columns_ref()
         .iter()
@@ -156,14 +190,24 @@ fn row_to_map(row: Row) -> BTreeMap<String, JsonValue> {
     names
         .into_iter()
         .zip(row.unwrap())
-        .map(|(name, value)| (name, mysql_value_to_json(value)))
+        .map(|(name, value)| {
+            let json_value =
+                mysql_value_to_json(value, column_types.get(&name).map(String::as_str));
+            (name, json_value)
+        })
         .collect()
 }
 
-fn mysql_value_to_json(value: Value) -> JsonValue {
+fn mysql_value_to_json(value: Value, column_type: Option<&str>) -> JsonValue {
     match value {
         Value::NULL => JsonValue::Null,
-        Value::Bytes(bytes) => JsonValue::String(String::from_utf8_lossy(&bytes).to_string()),
+        Value::Bytes(bytes) => {
+            if column_type.is_some_and(is_binary_json_or_spatial_type) {
+                JsonValue::String(bytes_to_hex(&bytes))
+            } else {
+                JsonValue::String(String::from_utf8_lossy(&bytes).to_string())
+            }
+        }
         Value::Int(value) => JsonValue::Number(Number::from(value)),
         Value::UInt(value) => JsonValue::Number(Number::from(value)),
         Value::Float(value) => Number::from_f64(value as f64)
@@ -188,4 +232,38 @@ fn mysql_value_to_json(value: Value) -> JsonValue {
             ))
         }
     }
+}
+
+fn is_binary_json_or_spatial_type(column_type: &str) -> bool {
+    let lower = column_type.to_ascii_lowercase();
+    lower.starts_with("bit(")
+        || lower.starts_with("binary(")
+        || lower.starts_with("varbinary(")
+        || matches!(
+            lower.as_str(),
+            "tinyblob" | "blob" | "mediumblob" | "longblob"
+        )
+        || is_spatial_type(&lower)
+}
+
+fn is_spatial_type(column_type: &str) -> bool {
+    matches!(
+        column_type.to_ascii_lowercase().as_str(),
+        "geometry"
+            | "point"
+            | "linestring"
+            | "polygon"
+            | "multipoint"
+            | "multilinestring"
+            | "multipolygon"
+            | "geometrycollection"
+    )
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join("")
 }

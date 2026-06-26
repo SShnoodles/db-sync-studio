@@ -111,7 +111,24 @@ export function DataSyncPage({
         .flatMap((run) => {
           const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
           return run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql);
-        }),
+      }),
+    );
+  }, [currentRuns, operationSelection, selectedTables]);
+
+  const selectedOperationSummary = useMemo(() => {
+    const selected = new Set(selectedTables.map(String));
+    return currentRuns.reduce(
+      (summary, run) => {
+        if (!selected.has(run.tableName)) return summary;
+        const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+        return {
+          insert: summary.insert + (selectedOperations.insert ? run.summary.inserts : 0),
+          update: summary.update + (selectedOperations.update ? run.summary.updates : 0),
+          delete: summary.delete + (selectedOperations.delete ? run.summary.deletes : 0),
+          same: summary.same + run.summary.sameRows,
+        };
+      },
+      { insert: 0, update: 0, delete: 0, same: 0 },
     );
   }, [currentRuns, operationSelection, selectedTables]);
 
@@ -132,7 +149,9 @@ export function DataSyncPage({
         disabled={!row.run || count === 0}
         onChange={(event) => toggleOperation(row.tableName, operation, event.target.checked)}
       />
-      <span className={count === 0 ? "muted-count" : undefined}>{count}</span>
+      <span className={`operation-count operation-count-${operation} ${count === 0 ? "muted-count" : ""}`}>
+        {count}
+      </span>
     </Space>
   );
 
@@ -234,17 +253,7 @@ export function DataSyncPage({
             </Col>
           </Row>
           <div className="data-sync-toolbar">
-            <Space size={8}>
-              <Typography.Text type="secondary">
-                {t("data.selectedTables", { count: selectedTables.length })}
-              </Typography.Text>
-              <Button size="small" onClick={() => setSelectedTables(selectableTables)} disabled={selectableTables.length === 0}>
-                {t("schema.selectAllDiffs")}
-              </Button>
-              <Button size="small" onClick={() => setSelectedTables([])} disabled={selectedTables.length === 0}>
-                {t("schema.clearSelection")}
-              </Button>
-            </Space>
+            <span />
             <Space size={8}>
               <Button onClick={onReset} disabled={runningCompare}>
                 {t("schema.reset")}
@@ -262,22 +271,54 @@ export function DataSyncPage({
           </div>
         </Form>
         {rows.length > 0 ? (
-          <Table
-            className="data-sync-table"
-            rowKey="tableName"
-            size="small"
-            columns={columns}
-            dataSource={rows}
-            pagination={false}
-            scroll={{ y: 304, x: 970 }}
-            rowSelection={{
-              selectedRowKeys: selectedTables,
-              onChange: setSelectedTables,
-              getCheckboxProps: (row) => ({
-                disabled: !row.sourceExists || !row.targetExists,
-              }),
-            }}
-          />
+          <>
+            <div className="data-sync-selected-summary">
+              <div className="data-sync-selected-stat data-sync-selected-tables-stat">
+                <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>
+                <span className="data-sync-selected-stat-value">{selectedTables.length}</span>
+              </div>
+              <div className="data-sync-selected-stat data-sync-selected-insert-stat">
+                <span className="data-sync-selected-stat-title">{t("data.insert")}</span>
+                <span className="data-sync-selected-stat-value operation-count-insert">{selectedOperationSummary.insert}</span>
+              </div>
+              <div className="data-sync-selected-stat data-sync-selected-update-stat">
+                <span className="data-sync-selected-stat-title">{t("data.update")}</span>
+                <span className="data-sync-selected-stat-value operation-count-update">{selectedOperationSummary.update}</span>
+              </div>
+              <div className="data-sync-selected-stat data-sync-selected-delete-stat">
+                <span className="data-sync-selected-stat-title">{t("data.delete")}</span>
+                <span className="data-sync-selected-stat-value operation-count-delete">{selectedOperationSummary.delete}</span>
+              </div>
+              <div className="data-sync-selected-stat data-sync-selected-same-stat">
+                <span className="data-sync-selected-stat-title">{t("data.same")}</span>
+                <span className="data-sync-selected-stat-value">{selectedOperationSummary.same}</span>
+              </div>
+            </div>
+            <div className="data-sync-table-actions">
+              <Button size="small" onClick={() => setSelectedTables(selectableTables)} disabled={selectableTables.length === 0}>
+                {t("schema.selectAllDiffs")}
+              </Button>
+              <Button size="small" onClick={() => setSelectedTables([])} disabled={selectedTables.length === 0}>
+                {t("schema.clearSelection")}
+              </Button>
+            </div>
+            <Table
+              className="data-sync-table"
+              rowKey="tableName"
+              size="small"
+              columns={columns}
+              dataSource={rows}
+              pagination={false}
+              scroll={{ y: 304, x: 970 }}
+              rowSelection={{
+                selectedRowKeys: selectedTables,
+                onChange: setSelectedTables,
+                getCheckboxProps: (row) => ({
+                  disabled: !row.sourceExists || !row.targetExists,
+                }),
+              }}
+            />
+          </>
         ) : (
           <Empty className="compact-empty" description={loadingTables ? t("schema.loadingTables") : t("data.noTables")} />
         )}

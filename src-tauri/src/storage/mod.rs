@@ -227,26 +227,40 @@ impl LocalStore {
     pub fn list_history(
         &self,
         sync_type: Option<String>,
+        database_type: Option<String>,
         start_time: Option<String>,
         end_time: Option<String>,
+        search_content: Option<String>,
     ) -> Result<Vec<Value>, String> {
         let connection = self
             .connection
             .lock()
             .map_err(|_| "Storage lock failed".to_string())?;
+        let database_type_pattern =
+            database_type.map(|value| format!("%\"dbType\":\"{}\"%", escape_like(&value)));
+        let search_pattern = search_content.map(|value| format!("%{}%", escape_like(&value)));
         let mut statement = connection
             .prepare(
                 "SELECT result_json FROM compare_history
                 WHERE (?1 IS NULL OR sync_type = ?1)
                 AND (?2 IS NULL OR created_at >= ?2)
                 AND (?3 IS NULL OR created_at <= ?3)
+                AND (?4 IS NULL OR result_json LIKE ?4 ESCAPE '\\')
+                AND (?5 IS NULL OR result_json LIKE ?5 ESCAPE '\\')
                 ORDER BY created_at DESC",
             )
             .map_err(|error| error.to_string())?;
         let items = statement
-            .query_map(params![sync_type, start_time, end_time], |row| {
-                row.get::<_, String>(0)
-            })
+            .query_map(
+                params![
+                    sync_type,
+                    start_time,
+                    end_time,
+                    database_type_pattern,
+                    search_pattern
+                ],
+                |row| row.get::<_, String>(0),
+            )
             .map_err(|error| error.to_string())?
             .map(|item| {
                 item.map_err(|error| error.to_string())
@@ -286,4 +300,11 @@ impl LocalStore {
             .map_err(|error| error.to_string())?;
         Ok(())
     }
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }

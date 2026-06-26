@@ -72,14 +72,6 @@ body {
   border-radius: 5px;
   background: #1677ff;
 }
-.sider-footer {
-  position: absolute;
-  bottom: 14px;
-  left: 14px;
-  right: 14px;
-  color: var(--sider-muted);
-  font-size: 11px;
-}
 .app-sider .ant-menu-item {
   height: 34px;
   line-height: 34px;
@@ -233,6 +225,9 @@ body {
 .history-filter-select {
   width: 130px;
 }
+.history-search-input {
+  width: 240px;
+}
 .history-pagination {
   position: fixed;
   left: 208px;
@@ -304,6 +299,65 @@ body {
 .data-sync-table .ant-checkbox-wrapper,
 .data-sync-table .ant-checkbox {
   line-height: 1;
+}
+.data-sync-selected-summary {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.data-sync-selected-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.data-sync-selected-stat-title {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.data-sync-selected-stat-value {
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.data-sync-selected-tables-stat {
+  grid-column: auto;
+}
+.data-sync-selected-insert-stat {
+  grid-column: auto;
+}
+.data-sync-selected-update-stat {
+  grid-column: auto;
+}
+.data-sync-selected-delete-stat {
+  grid-column: auto;
+}
+.data-sync-selected-same-stat {
+  grid-column: auto;
+}
+.data-sync-table-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.operation-count {
+  display: inline-block;
+  min-width: 28px;
+  font-weight: 500;
+}
+.operation-count-insert {
+  color: #389e0d;
+}
+.operation-count-update {
+  color: #d48806;
+}
+.operation-count-delete {
+  color: #cf1322;
 }
 .muted-count {
   color: rgba(0, 0, 0, 0.35);
