@@ -16,6 +16,12 @@
 - 中英文界面
 - 浅色 / 深色主题
 
+## 下载
+
+从这里下载最新的 macOS、Windows 和 Linux 安装包：
+
+[GitHub Releases](https://github.com/SShnoodles/db-sync-studio/releases)
+
 ## 开发
 
 安装依赖：

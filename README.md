@@ -16,6 +16,12 @@ Local-first database schema and data comparison tool built with Tauri, React, an
 - English / Chinese UI
 - Light / dark theme
 
+## Download
+
+Download the latest macOS, Windows, and Linux builds from:
+
+[GitHub Releases](https://github.com/SShnoodles/db-sync-studio/releases)
+
 ## Development
 
 Install dependencies:
