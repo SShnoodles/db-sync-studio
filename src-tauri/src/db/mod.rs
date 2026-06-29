@@ -1,5 +1,6 @@
 pub mod mysql;
 pub mod postgres;
+pub mod sqlite;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,10 +28,10 @@ impl DbConnection {
         if self.name.trim().is_empty() {
             return Err("Connection name is required".into());
         }
-        if !matches!(self.db_type.as_str(), "mysql" | "postgresql") {
-            return Err("Supported database types are MySQL and PostgreSQL".into());
+        if !matches!(self.db_type.as_str(), "mysql" | "postgresql" | "sqlite") {
+            return Err("Supported database types are MySQL, PostgreSQL and SQLite".into());
         }
-        if self.host.as_deref().unwrap_or("").trim().is_empty() {
+        if self.db_type != "sqlite" && self.host.as_deref().unwrap_or("").trim().is_empty() {
             return Err("Host is required".into());
         }
         if self.database.trim().is_empty() {
@@ -51,6 +52,7 @@ pub fn test_connection(connection: &DbConnection) -> Result<String, String> {
     match connection.db_type.as_str() {
         "mysql" => mysql::test_connection(connection),
         "postgresql" => postgres::test_connection(connection),
+        "sqlite" => sqlite::test_connection(connection),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -59,6 +61,7 @@ pub fn list_tables(connection: &DbConnection) -> Result<Vec<TableMeta>, String> 
     match connection.db_type.as_str() {
         "mysql" => mysql::list_tables(connection),
         "postgresql" => postgres::list_tables(connection),
+        "sqlite" => sqlite::list_tables(connection),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -67,6 +70,7 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
     match connection.db_type.as_str() {
         "mysql" => mysql::list_columns(connection, table),
         "postgresql" => postgres::list_columns(connection, table),
+        "sqlite" => sqlite::list_columns(connection, table),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -75,6 +79,7 @@ pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<Strin
     match connection.db_type.as_str() {
         "mysql" => mysql::show_create_table(connection, table),
         "postgresql" => postgres::show_create_table(connection, table),
+        "sqlite" => sqlite::show_create_table(connection, table),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -83,6 +88,7 @@ pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String
     match connection.db_type.as_str() {
         "mysql" => mysql::primary_keys(connection, table),
         "postgresql" => postgres::primary_keys(connection, table),
+        "sqlite" => sqlite::primary_keys(connection, table),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -96,6 +102,7 @@ pub fn fetch_rows(
     match connection.db_type.as_str() {
         "mysql" => mysql::fetch_rows(connection, table, order_columns, limit),
         "postgresql" => postgres::fetch_rows(connection, table, order_columns, limit),
+        "sqlite" => sqlite::fetch_rows(connection, table, order_columns, limit),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -103,6 +110,7 @@ pub fn fetch_rows(
 pub fn quote_identifier(connection: &DbConnection, value: &str) -> String {
     match connection.db_type.as_str() {
         "postgresql" => postgres::quote_identifier(value),
+        "sqlite" => sqlite::quote_identifier(value),
         _ => format!("`{}`", value.replace('`', "``")),
     }
 }
@@ -110,6 +118,7 @@ pub fn quote_identifier(connection: &DbConnection, value: &str) -> String {
 pub fn null_safe_eq_operator(connection: &DbConnection) -> &'static str {
     match connection.db_type.as_str() {
         "postgresql" => "IS NOT DISTINCT FROM",
+        "sqlite" => "IS",
         _ => "<=>",
     }
 }

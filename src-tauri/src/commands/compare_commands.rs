@@ -165,7 +165,7 @@ pub fn list_compare_history(
         _ => None,
     };
     let database_type = match database_type.as_deref() {
-        Some("mysql") | Some("postgresql") => database_type,
+        Some("mysql") | Some("postgresql") | Some("sqlite") => database_type,
         _ => None,
     };
     let search_content = search_content

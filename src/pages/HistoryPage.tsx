@@ -9,7 +9,7 @@ import { formatDate } from "../utils/format";
 
 const pageSize = 3;
 type HistoryTypeFilter = "all" | "schema" | "data";
-type DatabaseTypeFilter = "all" | "mysql" | "postgresql";
+type DatabaseTypeFilter = "all" | "mysql" | "postgresql" | "sqlite";
 type TimeRange = Parameters<NonNullable<React.ComponentProps<typeof DatePicker.RangePicker>["onChange"]>>[0];
 
 export function HistoryPage({
@@ -113,6 +113,7 @@ export function HistoryPage({
                 { value: "all", label: t("history.allDatabaseTypes") },
                 { value: "mysql", label: "MySQL" },
                 { value: "postgresql", label: "PostgreSQL" },
+                { value: "sqlite", label: "SQLite" },
               ]}
             />
           </Space>
@@ -235,6 +236,7 @@ export function HistoryPage({
 }
 
 function dbTypeLabel(dbType: string) {
+  if (dbType === "sqlite") return "SQLite";
   return dbType === "postgresql" ? "PostgreSQL" : "MySQL";
 }
 

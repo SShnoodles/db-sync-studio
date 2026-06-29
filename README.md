@@ -6,7 +6,7 @@ Local-first database schema and data comparison tool built with Tauri, React, an
 
 ## Features
 
-- MySQL and PostgreSQL connection management
+- MySQL, PostgreSQL, and SQLite connection management
 - Schema sync comparison for tables, columns, comments, and PostgreSQL enum types
 - Data sync comparison across multiple tables
 - Insert / Update / Delete / Same result summary

@@ -6,7 +6,7 @@
 
 ## 功能
 
-- MySQL 和 PostgreSQL 连接管理
+- MySQL、PostgreSQL 和 SQLite 连接管理
 - 结构同步对比：表、字段、注释、PostgreSQL 枚举类型
 - 数据同步对比：支持多表
 - 按新增 / 更新 / 删除 / 相同展示结果统计

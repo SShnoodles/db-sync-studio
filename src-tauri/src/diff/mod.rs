@@ -291,6 +291,14 @@ fn compare_columns(
 }
 
 fn column_add_sql(connection: &DbConnection, table_name: &str, source: &ColumnMeta) -> String {
+    if connection.db_type == "sqlite" && source.is_primary_key {
+        return format!(
+            "-- SQLite cannot add primary key column {} to {} directly. Recreate the table manually.",
+            db::quote_identifier(connection, &source.name),
+            db::quote_identifier(connection, table_name)
+        );
+    }
+
     let mut statements = vec![format!(
         "ALTER TABLE {} ADD COLUMN {};",
         db::quote_identifier(connection, table_name),
@@ -322,6 +330,18 @@ fn column_modify_sql(
     let table = db::quote_identifier(connection, table_name);
     let column_name = db::quote_identifier(connection, &source.name);
     let mut statements = Vec::new();
+
+    if connection.db_type == "sqlite" {
+        statements.push(format!(
+            "-- SQLite cannot modify column {column_name} on {table} directly. Recreate the table manually."
+        ));
+        if target.is_primary_key != source.is_primary_key {
+            statements.push(format!(
+                "-- Primary key changes for {table} require table rebuild in SQLite."
+            ));
+        }
+        return statements.join("\n");
+    }
 
     if target.is_primary_key && !source.is_primary_key {
         statements.push(if connection.db_type == "postgresql" {
@@ -408,7 +428,7 @@ fn column_definition(connection: &DbConnection, column: &ColumnMeta) -> String {
     );
     if let Some(default_value) = &column.default_value {
         definition.push_str(" DEFAULT ");
-        if connection.db_type == "postgresql" {
+        if connection.db_type == "postgresql" || connection.db_type == "sqlite" {
             definition.push_str(default_value);
         } else {
             definition.push_str(&quote_default(default_value));

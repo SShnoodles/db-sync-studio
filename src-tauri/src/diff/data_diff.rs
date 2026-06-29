@@ -358,6 +358,11 @@ fn sql_value(target: &DbConnection, value: &Value, column: Option<&db::ColumnMet
             return mysql_sql_value(value, column);
         }
     }
+    if target.db_type == "sqlite" {
+        if let Some(column) = column {
+            return sqlite_sql_value(value, column);
+        }
+    }
 
     match value {
         Value::Null => "NULL".into(),
@@ -380,6 +385,77 @@ fn sql_value(target: &DbConnection, value: &Value, column: Option<&db::ColumnMet
             format!("'{}'", value.to_string().replace('\'', "''"))
         }
     }
+}
+
+fn sqlite_sql_value(value: &Value, column: &db::ColumnMeta) -> String {
+    match value {
+        Value::Null => "NULL".into(),
+        Value::Bool(value) => {
+            if *value {
+                "1".into()
+            } else {
+                "0".into()
+            }
+        }
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => quoted_sqlite_string(&value.to_string()),
+        Value::String(value) => {
+            let lower_type = column.column_type.to_ascii_lowercase();
+            if is_sqlite_blob_type(&lower_type) {
+                sqlite_hex_literal(value)
+            } else if is_sqlite_number_type(&lower_type) && is_plain_number(value) {
+                value.clone()
+            } else {
+                quoted_sqlite_string(value)
+            }
+        }
+    }
+}
+
+fn quoted_sqlite_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn sqlite_hex_literal(value: &str) -> String {
+    let hex = value
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .collect::<String>();
+    if hex.is_empty() {
+        "X''".into()
+    } else {
+        format!("X'{}'", hex.to_ascii_uppercase())
+    }
+}
+
+fn is_sqlite_blob_type(column_type: &str) -> bool {
+    column_type.contains("blob")
+}
+
+fn is_sqlite_number_type(column_type: &str) -> bool {
+    let base_type = sqlite_base_type(column_type);
+    matches!(
+        base_type.as_str(),
+        "integer"
+            | "int"
+            | "bigint"
+            | "smallint"
+            | "tinyint"
+            | "real"
+            | "double"
+            | "float"
+            | "numeric"
+            | "decimal"
+            | "boolean"
+    )
+}
+
+fn sqlite_base_type(column_type: &str) -> String {
+    column_type
+        .split(|character: char| character == '(' || character.is_whitespace())
+        .next()
+        .unwrap_or(column_type)
+        .to_string()
 }
 
 fn mysql_sql_value(value: &Value, column: &db::ColumnMeta) -> String {

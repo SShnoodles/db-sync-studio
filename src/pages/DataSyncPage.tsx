@@ -293,6 +293,10 @@ export function DataSyncPage({
                 <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>
                 <span className="data-sync-selected-stat-value">{selectedTables.length}</span>
               </div>
+              <div className="data-sync-selected-stat data-sync-selected-diffs-stat">
+                <span className="data-sync-selected-stat-title">{t("stats.diffs")}</span>
+                <span className="data-sync-selected-stat-value">{selectedSqlCount}</span>
+              </div>
               <div className="data-sync-selected-stat data-sync-selected-insert-stat">
                 <span className="data-sync-selected-stat-title">{t("data.insert")}</span>
                 <span className="data-sync-selected-stat-value operation-count-insert">{selectedOperationSummary.insert}</span>
@@ -325,7 +329,7 @@ export function DataSyncPage({
               columns={columns}
               dataSource={rows}
               pagination={false}
-              scroll={{ y: 304, x: 970 }}
+              scroll={{ y: "clamp(260px, 34vh, 460px)", x: 970 }}
               rowSelection={{
                 selectedRowKeys: selectedTables,
                 onChange: setSelectedTables,
@@ -345,9 +349,6 @@ export function DataSyncPage({
           title={t("schema.generatedSql")}
           extra={
             <Space size={8}>
-              <Typography.Text type="secondary">
-                {t("data.generatedSqlCount", { count: selectedSqlCount })}
-              </Typography.Text>
               <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
                 {t("common.copySql")}
               </Button>

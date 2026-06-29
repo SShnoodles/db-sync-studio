@@ -1,7 +1,7 @@
 export type DbConnection = {
   id: string;
   name: string;
-  dbType: "mysql" | "postgresql";
+  dbType: "mysql" | "postgresql" | "sqlite";
   host?: string;
   port?: number;
   database: string;

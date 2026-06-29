@@ -21,6 +21,8 @@ export function ConnectionsPage(props: {
   onDelete: () => void;
 }) {
   const { t } = useI18n();
+  const dbType = Form.useWatch("dbType", props.form) ?? props.form.getFieldValue("dbType") ?? "mysql";
+  const isSqlite = dbType === "sqlite";
 
   return (
     <>
@@ -63,7 +65,7 @@ export function ConnectionsPage(props: {
                         <EnvironmentTag value={item.environment} />
                       </Space>
                     }
-                    description={`${item.dbType} · ${item.username || defaultUsername(item.dbType)}@${item.host}:${item.port} · ${item.database}`}
+                    description={connectionDescription(item)}
                   />
                 </List.Item>
               )}
@@ -109,11 +111,14 @@ export function ConnectionsPage(props: {
                       options={[
                         { value: "mysql", label: t("common.mysql") },
                         { value: "postgresql", label: t("common.postgresql") },
+                        { value: "sqlite", label: t("common.sqlite") },
                       ]}
                       onChange={(value) => {
                         props.form.setFieldsValue({
-                          port: value === "postgresql" ? 5432 : 3306,
-                          username: value === "postgresql" ? "postgres" : "root",
+                          host: value === "sqlite" ? undefined : props.form.getFieldValue("host") || "127.0.0.1",
+                          port: value === "sqlite" ? undefined : value === "postgresql" ? 5432 : 3306,
+                          username: value === "sqlite" ? "" : value === "postgresql" ? "postgres" : "root",
+                          password: value === "sqlite" ? "" : props.form.getFieldValue("password"),
                         });
                       }}
                     />
@@ -129,46 +134,54 @@ export function ConnectionsPage(props: {
                     />
                   </Form.Item>
                 </Col>
-                <Col xs={24} md={16}>
-                  <Form.Item label={t("connections.host")} name="host" rules={[{ required: true, message: t("connections.hostRequired") }]}>
-                    <Input {...plainTextInputProps} prefix={<CloudServerOutlined />} />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} md={8}>
-                  <Form.Item label={t("connections.port")} name="port">
-                    <InputNumber min={1} max={65535} className="full-width" />
-                  </Form.Item>
-                </Col>
+                {!isSqlite && (
+                  <>
+                    <Col xs={24} md={16}>
+                      <Form.Item label={t("connections.host")} name="host" rules={[{ required: true, message: t("connections.hostRequired") }]}>
+                        <Input {...plainTextInputProps} prefix={<CloudServerOutlined />} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Form.Item label={t("connections.port")} name="port">
+                        <InputNumber min={1} max={65535} className="full-width" />
+                      </Form.Item>
+                    </Col>
+                  </>
+                )}
                 <Col span={24}>
                   <Form.Item
-                    label={t("connections.database")}
+                    label={isSqlite ? t("connections.databaseFile") : t("connections.database")}
                     name="database"
                     rules={[{ required: true, message: t("connections.databaseRequired") }]}
                   >
                     <Input {...plainTextInputProps} />
                   </Form.Item>
                 </Col>
-                <Col xs={24} md={12}>
-                  <Form.Item label={t("connections.username")} name="username">
-                    <Input {...plainTextInputProps} />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Form.Item label={t("connections.password")} name="password">
-                    <Input.Password {...plainTextInputProps} placeholder={t("connections.passwordPlaceholder")} />
-                  </Form.Item>
-                </Col>
-                <Col span={24}>
-                  <Form.Item label={t("connections.sslMode")} name="sslMode">
-                    <Select
-                      options={[
-                        { value: "prefer", label: "Prefer" },
-                        { value: "disable", label: "Disable" },
-                        { value: "require", label: "Require" },
-                      ]}
-                    />
-                  </Form.Item>
-                </Col>
+                {!isSqlite && (
+                  <>
+                    <Col xs={24} md={12}>
+                      <Form.Item label={t("connections.username")} name="username">
+                        <Input {...plainTextInputProps} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Form.Item label={t("connections.password")} name="password">
+                        <Input.Password {...plainTextInputProps} placeholder={t("connections.passwordPlaceholder")} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={24}>
+                      <Form.Item label={t("connections.sslMode")} name="sslMode">
+                        <Select
+                          options={[
+                            { value: "prefer", label: "Prefer" },
+                            { value: "disable", label: "Disable" },
+                            { value: "require", label: "Require" },
+                          ]}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </>
+                )}
               </Row>
               <div className="form-actions">
                 <Button onClick={props.onTest} loading={props.testing}>
@@ -187,5 +200,13 @@ export function ConnectionsPage(props: {
 }
 
 function defaultUsername(dbType: DbConnection["dbType"]) {
+  if (dbType === "sqlite") return "";
   return dbType === "postgresql" ? "postgres" : "root";
+}
+
+function connectionDescription(item: DbConnection) {
+  if (item.dbType === "sqlite") {
+    return `${item.dbType} · ${item.database}`;
+  }
+  return `${item.dbType} · ${item.username || defaultUsername(item.dbType)}@${item.host}:${item.port} · ${item.database}`;
 }

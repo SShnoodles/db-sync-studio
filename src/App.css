@@ -244,13 +244,15 @@ body {
 }
 .data-sync-page {
   display: flex;
-  min-height: calc(100vh - 72px);
+  height: calc(100vh - 72px);
+  min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 .data-sync-page .compare-result-card {
   display: flex;
   flex: 1;
-  min-height: 0;
+  min-height: 220px;
   flex-direction: column;
 }
 .data-sync-page .compare-result-card .ant-card-body {
@@ -301,7 +303,7 @@ body {
 }
 .data-sync-selected-summary {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   align-items: end;
   gap: 10px;
   margin-bottom: 6px;
@@ -324,6 +326,9 @@ body {
   line-height: 1.2;
 }
 .data-sync-selected-tables-stat {
+  grid-column: auto;
+}
+.data-sync-selected-diffs-stat {
   grid-column: auto;
 }
 .data-sync-selected-insert-stat {
@@ -408,7 +413,7 @@ body {
 .data-sql-preview {
   display: flex;
   width: 100%;
-  max-height: min(46vh, 520px);
+  height: 100%;
   min-height: 0;
   flex: 1;
   margin-top: 0;
@@ -433,7 +438,9 @@ body {
   white-space: pre-wrap;
 }
 .data-sql-preview pre {
-  max-height: min(46vh, 520px);
+  width: 100%;
+  height: 100%;
+  max-height: none;
   min-height: 0;
   flex: 1;
   overflow: auto;
