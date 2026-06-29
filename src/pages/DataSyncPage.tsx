@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Col, Empty, Form, Row, Select, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Col, Empty, Form, Progress, Row, Select, Space, Table, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import { PlayCircleOutlined } from "@ant-design/icons";
 
@@ -33,6 +33,7 @@ export function DataSyncPage({
   currentRuns,
   loadingTables,
   runningCompare,
+  compareProgress,
   onReset,
   onRun,
   onCopySql,
@@ -44,6 +45,7 @@ export function DataSyncPage({
   currentRuns: DataCompareRun[];
   loadingTables: boolean;
   runningCompare: boolean;
+  compareProgress: { completed: number; total: number };
   onReset: () => void;
   onRun: (values: DataCompareBatchRequest) => void;
   onCopySql: (sql: string) => void;
@@ -111,9 +113,23 @@ export function DataSyncPage({
         .flatMap((run) => {
           const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
           return run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql);
-      }),
+        }),
     );
   }, [currentRuns, operationSelection, selectedTables]);
+
+  const selectedSqlCount = useMemo(() => {
+    const selected = new Set(selectedTables.map(String));
+    return currentRuns
+      .filter((run) => selected.has(run.tableName))
+      .reduce((count, run) => {
+        const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+        return count + run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql).length;
+      }, 0);
+  }, [currentRuns, operationSelection, selectedTables]);
+
+  const progressPercent = compareProgress.total > 0
+    ? Math.round((compareProgress.completed / compareProgress.total) * 100)
+    : 0;
 
   const selectedOperationSummary = useMemo(() => {
     const selected = new Set(selectedTables.map(String));
@@ -328,15 +344,33 @@ export function DataSyncPage({
           className="compare-result-card"
           title={t("schema.generatedSql")}
           extra={
-            <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
-              {t("common.copySql")}
-            </Button>
+            <Space size={8}>
+              <Typography.Text type="secondary">
+                {t("data.generatedSqlCount", { count: selectedSqlCount })}
+              </Typography.Text>
+              <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
+                {t("common.copySql")}
+              </Button>
+            </Space>
           }
         >
           <section className="sql-preview data-sql-preview">
             <SqlCodePreview sql={selectedSql || t("data.noGeneratedSql")} />
           </section>
         </Card>
+      )}
+      {runningCompare && compareProgress.total > 0 && (
+        <div className="data-sync-progress">
+          <div className="data-sync-progress-title">
+            <Typography.Text type="secondary">
+              {t("data.compareProgress", {
+                completed: compareProgress.completed,
+                total: compareProgress.total,
+              })}
+            </Typography.Text>
+          </div>
+          <Progress percent={progressPercent} size="small" />
+        </div>
       )}
     </div>
   );

@@ -41,6 +41,7 @@ function App() {
   const [loadingDataTables, setLoadingDataTables] = useState(false);
   const [runningCompare, setRunningCompare] = useState(false);
   const [runningDataCompare, setRunningDataCompare] = useState(false);
+  const [dataCompareProgress, setDataCompareProgress] = useState({ completed: 0, total: 0 });
   const [form] = Form.useForm<DbConnection>();
   const [taskForm] = Form.useForm<CompareTask>();
   const [dataForm] = Form.useForm<DataCompareRequest>();
@@ -206,6 +207,7 @@ function App() {
   const resetDataCompare = () => {
     setCurrentDataRuns([]);
     setDataTables([]);
+    setDataCompareProgress({ completed: 0, total: 0 });
     dataForm.setFieldsValue(blankDataCompare());
     setPage("dataSync");
   };
@@ -213,6 +215,7 @@ function App() {
   const runDataCompare = async (values: DataCompareBatchRequest) => {
     try {
       setRunningDataCompare(true);
+      setDataCompareProgress({ completed: 0, total: values.tableNames.length });
       const results = await Promise.all(
         values.tableNames.map((tableName) =>
           dbSyncApi
@@ -225,7 +228,13 @@ function App() {
               createdAt: now(),
             })
             .then((run) => ({ tableName, run }))
-            .catch((error) => ({ tableName, error: String(error) })),
+            .catch((error) => ({ tableName, error: String(error) }))
+            .finally(() =>
+              setDataCompareProgress((current) => ({
+                ...current,
+                completed: Math.min(current.completed + 1, current.total),
+              })),
+            ),
         ),
       );
       const runs = results.flatMap((result) => ("run" in result ? [result.run] : []));
@@ -366,6 +375,7 @@ function App() {
                   currentRuns={currentDataRuns}
                   loadingTables={loadingDataTables}
                   runningCompare={runningDataCompare}
+                  compareProgress={dataCompareProgress}
                   onReset={resetDataCompare}
                   onRun={runDataCompare}
                   onCopySql={copySql}

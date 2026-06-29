@@ -13,8 +13,7 @@
     "windows": [
       {
         "title": "db-sync-studio",
-        "width": 1400,
-        "height": 1000
+        "maximized": true
       }
     ],
     "security": {

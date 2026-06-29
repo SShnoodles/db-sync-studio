@@ -76,7 +76,7 @@ body {
   margin-block: 2px;
 }
 .app-content {
-  padding: 22px 28px 72px;
+  padding: 0 28px 72px;
   background: var(--app-bg);
 }
 .page-title {
@@ -244,19 +244,20 @@ body {
 }
 .data-sync-page {
   display: flex;
-  min-height: calc(100vh - 94px);
+  min-height: calc(100vh - 72px);
   flex-direction: column;
 }
 .data-sync-page .compare-result-card {
   display: flex;
   flex: 1;
-  min-height: 240px;
+  min-height: 0;
   flex-direction: column;
 }
 .data-sync-page .compare-result-card .ant-card-body {
   display: flex;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 .table-check-list {
   width: 100%;
@@ -343,6 +344,20 @@ body {
   gap: 8px;
   margin-bottom: 6px;
 }
+.data-sync-progress {
+  position: fixed;
+  left: 208px;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  padding: 8px 28px 10px;
+  background: var(--floating-bg);
+  border-top: 1px solid var(--border-soft);
+  backdrop-filter: blur(8px);
+}
+.data-sync-progress-title {
+  margin-bottom: 4px;
+}
 .operation-count {
   display: inline-block;
   min-width: 28px;
@@ -393,9 +408,11 @@ body {
 .data-sql-preview {
   display: flex;
   width: 100%;
+  max-height: min(46vh, 520px);
   min-height: 0;
   flex: 1;
   margin-top: 0;
+  overflow: hidden;
 }
 .sql-preview h5 {
   margin-bottom: 6px !important;
@@ -416,9 +433,10 @@ body {
   white-space: pre-wrap;
 }
 .data-sql-preview pre {
-  max-height: none;
+  max-height: min(46vh, 520px);
   min-height: 0;
   flex: 1;
+  overflow: auto;
   padding: 8px 0;
 }
 .sql-line {
@@ -461,6 +479,11 @@ body {
 }
 @media (max-width: 900px) {
   .app-content {
-    padding: 18px 14px;
+    padding: 0 14px 72px;
+  }
+  .data-sync-progress,
+  .history-pagination {
+    left: 0;
+    padding-inline: 14px;
   }
 }
