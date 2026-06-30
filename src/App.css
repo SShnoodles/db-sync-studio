@@ -387,13 +387,34 @@ body {
   margin-bottom: 10px;
 }
 .compact-summary-stats {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .compact-summary-stats .ant-statistic .ant-statistic-title {
   margin-bottom: 0;
+  font-size: 10px;
+  line-height: 1.1;
 }
 .compact-summary-stats .ant-statistic .ant-statistic-content {
-  font-size: 16px;
+  font-size: 14px;
+  line-height: 1.15;
+}
+.schema-progress {
+  position: fixed;
+  left: 208px;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  padding: 8px 28px 10px;
+  background: var(--floating-bg);
+  border-top: 1px solid var(--border-soft);
+  backdrop-filter: blur(8px);
+}
+.schema-progress-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
 }
 .schema-diff-trees {
   margin-top: 4px;
@@ -410,6 +431,13 @@ body {
 .sql-preview {
   margin-top: 12px;
 }
+.sql-preview-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
 .data-sql-preview {
   display: flex;
   width: 100%;
@@ -420,11 +448,12 @@ body {
   overflow: hidden;
 }
 .sql-preview h5 {
-  margin-bottom: 6px !important;
+  margin-bottom: 0 !important;
   font-size: 13px !important;
 }
 .sql-preview pre {
-  max-height: 220px;
+  height: calc(30 * 1.45em + 20px);
+  max-height: calc(30 * 1.45em + 20px);
   overflow: auto;
   margin: 0;
   padding: 10px 12px;
@@ -439,8 +468,8 @@ body {
 }
 .data-sql-preview pre {
   width: 100%;
-  height: 100%;
-  max-height: none;
+  height: calc(30 * 1.45em + 16px);
+  max-height: calc(30 * 1.45em + 16px);
   min-height: 0;
   flex: 1;
   overflow: auto;
@@ -489,6 +518,7 @@ body {
     padding: 0 14px 72px;
   }
   .data-sync-progress,
+  .schema-progress,
   .history-pagination {
     left: 0;
     padding-inline: 14px;

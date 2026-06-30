@@ -13,9 +13,15 @@ type DiffEntry = SchemaDiff & { key: string };
 export function CompareResultPanel({
   run,
   onCopySql,
+  onSyncSql,
+  syncing = false,
+  syncDisabled = false,
 }: {
   run: CompareRun;
   onCopySql: (sql: string) => void;
+  onSyncSql?: (sql: string) => void;
+  syncing?: boolean;
+  syncDisabled?: boolean;
 }) {
   const { t } = useI18n();
   const entries = useMemo(() => buildEntries(run.diffs), [run.diffs]);
@@ -43,9 +49,6 @@ export function CompareResultPanel({
           <Button size="small" onClick={() => setCheckedKeys([])}>
             {t("schema.clearSelection")}
           </Button>
-          <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
-            {t("common.copySql")}
-          </Button>
         </Space>
       }
     >
@@ -55,7 +58,27 @@ export function CompareResultPanel({
         checkedKeys={checkedKeys}
         onCheckedKeysChange={setCheckedKeys}
       />
-      <SqlPreview sql={selectedSql} />
+      <SqlPreview
+        sql={selectedSql}
+        actions={
+          <Space size={8}>
+            <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
+              {t("common.copySql")}
+            </Button>
+            {onSyncSql && (
+              <Button
+                size="small"
+                danger
+                loading={syncing}
+                disabled={syncDisabled || !selectedSql.trim()}
+                onClick={() => onSyncSql(selectedSql)}
+              >
+                {t("schema.sync")}
+              </Button>
+            )}
+          </Space>
+        }
+      />
     </Card>
   );
 }
@@ -63,6 +86,7 @@ export function CompareResultPanel({
 export function SummaryStats({ summary, diffs = [] }: { summary: CompareSummary; diffs?: SchemaDiff[] }) {
   const { t } = useI18n();
   const normalized = {
+    diffs: summary.totalDiffs ?? diffs.length,
     added: summary.added ?? diffs.filter((diff) => diff.diffType === "added").length,
     modified: summary.modified ?? diffs.filter((diff) => diff.diffType === "modified").length,
     removed: summary.removed ?? diffs.filter((diff) => diff.diffType === "removed").length,
@@ -71,16 +95,19 @@ export function SummaryStats({ summary, diffs = [] }: { summary: CompareSummary;
 
   return (
     <Row gutter={[6, 6]} className="summary-stats compact-summary-stats">
-      <Col xs={12} md={6}>
+      <Col flex="1 1 0">
+        <Statistic title={t("stats.diffs")} value={normalized.diffs} />
+      </Col>
+      <Col flex="1 1 0">
         <Statistic title={t("stats.added")} value={normalized.added} valueStyle={{ color: "#389e0d" }} />
       </Col>
-      <Col xs={12} md={6}>
+      <Col flex="1 1 0">
         <Statistic title={t("stats.modified")} value={normalized.modified} valueStyle={{ color: "#d48806" }} />
       </Col>
-      <Col xs={12} md={6}>
+      <Col flex="1 1 0">
         <Statistic title={t("stats.removed")} value={normalized.removed} valueStyle={{ color: "#cf1322" }} />
       </Col>
-      <Col xs={12} md={6}>
+      <Col flex="1 1 0">
         <Statistic title={t("stats.same")} value={normalized.same} />
       </Col>
     </Row>
@@ -162,12 +189,15 @@ function SchemaDiffTrees({
   );
 }
 
-export function SqlPreview({ sql }: { sql: string }) {
+export function SqlPreview({ sql, actions }: { sql: string; actions?: React.ReactNode }) {
   const { t } = useI18n();
 
   return (
     <section className="sql-preview">
-      <Typography.Title level={5}>{t("schema.generatedSql")}</Typography.Title>
+      <div className="sql-preview-title">
+        <Typography.Title level={5}>{t("schema.generatedSql")}</Typography.Title>
+        {actions}
+      </div>
       <SqlCodePreview sql={sql || t("schema.noGeneratedSql")} />
     </section>
   );

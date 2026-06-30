@@ -177,6 +177,21 @@ pub fn fetch_rows(
         .collect())
 }
 
+pub fn execute_schema_statements(
+    connection: &DbConnection,
+    statements: &[String],
+) -> Result<(), String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    for statement in statements {
+        conn.query_drop(statement)
+            .map_err(|error| format!("Unable to execute MySQL schema SQL: {error}\n{statement}"))?;
+    }
+    Ok(())
+}
+
 fn escape_identifier(value: &str) -> String {
     value.replace('`', "``")
 }

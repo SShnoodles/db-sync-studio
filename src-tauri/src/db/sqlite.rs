@@ -156,6 +156,19 @@ pub fn fetch_rows(
         .map_err(|error| format!("Unable to fetch rows from {table}: {error}"))
 }
 
+pub fn execute_schema_statements(
+    config: &DbConnection,
+    statements: &[String],
+) -> Result<(), String> {
+    let connection = connection(config)?;
+    for statement in statements {
+        connection.execute_batch(statement).map_err(|error| {
+            format!("Unable to execute SQLite schema SQL: {error}\n{statement}")
+        })?;
+    }
+    Ok(())
+}
+
 pub fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }

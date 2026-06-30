@@ -69,6 +69,16 @@ export type CompareRun = {
   createdAt: string;
 };
 
+export type SchemaSyncRequest = {
+  targetConnectionId: string;
+  sql: string;
+};
+
+export type SchemaSyncResult = {
+  executed: number;
+  skipped: number;
+};
+
 export type HistoryRun = CompareRun | DataCompareHistoryRun;
 
 export type HistoryFilter = {

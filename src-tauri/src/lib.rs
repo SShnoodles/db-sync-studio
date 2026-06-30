@@ -32,6 +32,7 @@ pub fn run() {
             commands::compare_commands::list_data_sync_tables,
             commands::compare_commands::run_schema_compare,
             commands::compare_commands::run_schema_compare_once,
+            commands::compare_commands::run_schema_sync,
             commands::compare_commands::list_compare_history,
             commands::compare_commands::save_data_compare_history,
             commands::compare_commands::delete_compare_history,

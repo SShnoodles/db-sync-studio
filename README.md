@@ -69,5 +69,5 @@ Default macOS path:
 
 - Source and target must use the same database type.
 - Data sync requires primary keys.
-- Generated SQL is preview-only; the app does not execute synchronization SQL.
+- Schema sync can execute selected SQL on the target database; data sync is still preview-only.
 - Large table comparison is limited by the current row fetch limit.

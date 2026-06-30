@@ -107,6 +107,34 @@ pub fn fetch_rows(
     }
 }
 
+pub fn execute_schema_sql(
+    connection: &DbConnection,
+    sql: &str,
+) -> Result<SchemaSyncResult, String> {
+    let statements = split_sql_statements(sql)
+        .into_iter()
+        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
+        .collect::<Vec<_>>();
+    if statements.is_empty() {
+        return Ok(SchemaSyncResult {
+            executed: 0,
+            skipped: 0,
+        });
+    }
+
+    match connection.db_type.as_str() {
+        "mysql" => mysql::execute_schema_statements(connection, &statements)?,
+        "postgresql" => postgres::execute_schema_statements(connection, &statements)?,
+        "sqlite" => sqlite::execute_schema_statements(connection, &statements)?,
+        _ => return Err("Unsupported database type".into()),
+    }
+
+    Ok(SchemaSyncResult {
+        executed: statements.len(),
+        skipped: 0,
+    })
+}
+
 pub fn quote_identifier(connection: &DbConnection, value: &str) -> String {
     match connection.db_type.as_str() {
         "postgresql" => postgres::quote_identifier(value),
@@ -164,6 +192,32 @@ pub struct TypeMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SchemaSyncRequest {
+    pub target_connection_id: String,
+    pub sql: String,
+}
+
+impl SchemaSyncRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.target_connection_id.trim().is_empty() {
+            return Err("Target connection is required".into());
+        }
+        if self.sql.trim().is_empty() {
+            return Err("SQL is required".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaSyncResult {
+    pub executed: usize,
+    pub skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompareTask {
     pub id: String,
     pub name: String,
@@ -194,6 +248,159 @@ impl CompareTask {
         }
         Ok(())
     }
+}
+
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut start = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let chars = sql.char_indices().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        let (byte_index, character) = chars[index];
+        let next = chars.get(index + 1).map(|(_, value)| *value);
+        let previous = if index > 0 {
+            chars.get(index - 1).map(|(_, value)| *value)
+        } else {
+            None
+        };
+
+        if in_line_comment {
+            if character == '\n' {
+                in_line_comment = false;
+            }
+            index += 1;
+            continue;
+        }
+        if in_block_comment {
+            if character == '*' && next == Some('/') {
+                in_block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+
+        if !in_single && !in_double && !in_backtick {
+            if character == '-' && next == Some('-') {
+                in_line_comment = true;
+                index += 2;
+                continue;
+            }
+            if character == '/' && next == Some('*') {
+                in_block_comment = true;
+                index += 2;
+                continue;
+            }
+        }
+
+        match character {
+            '\'' if !in_double && !in_backtick => {
+                if in_single && next == Some('\'') {
+                    index += 2;
+                    continue;
+                }
+                if previous != Some('\\') {
+                    in_single = !in_single;
+                }
+            }
+            '"' if !in_single && !in_backtick => in_double = !in_double,
+            '`' if !in_single && !in_double => in_backtick = !in_backtick,
+            ';' if !in_single && !in_double && !in_backtick => {
+                let statement = sql[start..=byte_index].trim();
+                if !statement.is_empty() {
+                    statements.push(statement.to_string());
+                }
+                start = byte_index + character.len_utf8();
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    let trailing = sql[start..].trim();
+    if !trailing.is_empty() {
+        statements.push(trailing.to_string());
+    }
+    statements
+}
+
+fn strip_sql_comments(sql: &str) -> String {
+    let mut output = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let chars = sql.chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        let character = chars[index];
+        let next = chars.get(index + 1).copied();
+        let previous = if index > 0 {
+            chars.get(index - 1).copied()
+        } else {
+            None
+        };
+
+        if in_line_comment {
+            if character == '\n' {
+                in_line_comment = false;
+                output.push('\n');
+            }
+            index += 1;
+            continue;
+        }
+        if in_block_comment {
+            if character == '*' && next == Some('/') {
+                in_block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+
+        if !in_single && !in_double && !in_backtick {
+            if character == '-' && next == Some('-') {
+                in_line_comment = true;
+                index += 2;
+                continue;
+            }
+            if character == '/' && next == Some('*') {
+                in_block_comment = true;
+                index += 2;
+                continue;
+            }
+        }
+
+        match character {
+            '\'' if !in_double && !in_backtick => {
+                if in_single && next == Some('\'') {
+                    output.push(character);
+                    output.push('\'');
+                    index += 2;
+                    continue;
+                }
+                if previous != Some('\\') {
+                    in_single = !in_single;
+                }
+            }
+            '"' if !in_single && !in_backtick => in_double = !in_double,
+            '`' if !in_single && !in_double => in_backtick = !in_backtick,
+            _ => {}
+        }
+        output.push(character);
+        index += 1;
+    }
+    output
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

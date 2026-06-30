@@ -231,6 +231,19 @@ pub fn fetch_rows(
     rows.into_iter().map(row_to_map).collect()
 }
 
+pub fn execute_schema_statements(
+    connection: &DbConnection,
+    statements: &[String],
+) -> Result<(), String> {
+    let mut client = client(connection)?;
+    for statement in statements {
+        client.batch_execute(statement).map_err(|error| {
+            format!("Unable to execute PostgreSQL schema SQL: {error}\n{statement}")
+        })?;
+    }
+    Ok(())
+}
+
 fn row_to_map(row: Row) -> Result<BTreeMap<String, JsonValue>, String> {
     let json: String = row.get(0);
     let value: JsonValue = serde_json::from_str(&json).map_err(|error| error.to_string())?;

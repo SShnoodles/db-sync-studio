@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     db::{
         self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRun, DataCompareRequest,
-        DataCompareRun,
+        DataCompareRun, SchemaSyncRequest, SchemaSyncResult,
     },
     diff,
     storage::LocalStore,
@@ -149,6 +149,16 @@ pub fn run_schema_compare_once(
     };
     store.save_history(&run)?;
     Ok(run)
+}
+
+#[tauri::command]
+pub fn run_schema_sync(
+    request: SchemaSyncRequest,
+    store: State<'_, LocalStore>,
+) -> Result<SchemaSyncResult, String> {
+    request.validate()?;
+    let target = store.get_connection(&request.target_connection_id)?;
+    db::execute_schema_sql(&target, &request.sql)
 }
 
 #[tauri::command]

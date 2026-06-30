@@ -15,9 +15,15 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryFilter, HistoryRun, Page } from "./types";
-import { blankConnection, blankDataCompare, blankTask, now } from "./utils/defaults";
+import { blankConnection, blankDataCompare, now } from "./utils/defaults";
 
 type ThemeMode = "light" | "dark";
+type SchemaProgress = {
+  kind: "compare" | "sync";
+  completed: number;
+  total: number;
+  status?: "normal" | "active" | "success" | "exception";
+};
 
 function initialThemeMode(): ThemeMode {
   return localStorage.getItem("db-sync-studio.theme") === "dark" ? "dark" : "light";
@@ -41,6 +47,8 @@ function App() {
   const [loadingDataTables, setLoadingDataTables] = useState(false);
   const [runningCompare, setRunningCompare] = useState(false);
   const [runningDataCompare, setRunningDataCompare] = useState(false);
+  const [syncingSchema, setSyncingSchema] = useState(false);
+  const [schemaProgress, setSchemaProgress] = useState<SchemaProgress>();
   const [dataCompareProgress, setDataCompareProgress] = useState({ completed: 0, total: 0 });
   const [form] = Form.useForm<DbConnection>();
   const [taskForm] = Form.useForm<CompareTask>();
@@ -172,18 +180,13 @@ function App() {
     }
   };
 
-  const createTask = () => {
-    setCurrentRun(undefined);
-    setTaskTables([]);
-    taskForm.setFieldsValue(blankTask());
-    setPage("schemaSync");
-  };
-
   const runSchemaCompare = async (values: CompareTask) => {
     try {
       setRunningCompare(true);
       const source = connections.find((item) => item.id === values.sourceConnectionId);
       const target = connections.find((item) => item.id === values.targetConnectionId);
+      const compareTotal = Math.max(values.selectedTables?.length || taskTables.length || 1, 1);
+      setSchemaProgress({ kind: "compare", completed: 0, total: compareTotal, status: "active" });
       const task = {
         ...values,
         id: crypto.randomUUID(),
@@ -196,8 +199,15 @@ function App() {
       const run = await dbSyncApi.runSchemaCompareOnce(task);
       setCurrentRun(run);
       await loadHistory();
+      setSchemaProgress({ kind: "compare", completed: compareTotal, total: compareTotal, status: "success" });
       messageApi.success(t("messages.schemaCompareCompleted", { count: run.summary.totalDiffs }));
     } catch (error) {
+      setSchemaProgress((current) => ({
+        kind: "compare",
+        completed: current?.completed ?? 0,
+        total: current?.total ?? 1,
+        status: "exception",
+      }));
       messageApi.error(String(error));
     } finally {
       setRunningCompare(false);
@@ -263,6 +273,49 @@ function App() {
     }
     await navigator.clipboard.writeText(sql);
     messageApi.success(t("messages.sqlCopied"));
+  };
+
+  const runSchemaSync = (sql: string) => {
+    if (!sql.trim()) {
+      messageApi.info(t("messages.noSqlToSync"));
+      return;
+    }
+    const targetConnectionId = taskForm.getFieldValue("targetConnectionId");
+    if (!targetConnectionId) {
+      messageApi.error(t("schema.selectTarget"));
+      return;
+    }
+    Modal.confirm({
+      title: t("modal.schemaSyncTitle"),
+      content: t("modal.schemaSyncContent"),
+      okText: t("schema.sync"),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          setSyncingSchema(true);
+          const syncTotal = Math.max(countSqlStatements(sql), 1);
+          setSchemaProgress({ kind: "sync", completed: 0, total: syncTotal, status: "active" });
+          const result = await dbSyncApi.runSchemaSync({
+            targetConnectionId,
+            sql,
+          });
+          await loadHistory();
+          await loadTaskTables(taskForm.getFieldsValue(true));
+          setSchemaProgress({ kind: "sync", completed: result.executed, total: syncTotal, status: "success" });
+          messageApi.success(t("messages.schemaSyncApplied", { count: result.executed }));
+        } catch (error) {
+          setSchemaProgress((current) => ({
+            kind: "sync",
+            completed: current?.completed ?? 0,
+            total: current?.total ?? 1,
+            status: "exception",
+          }));
+          messageApi.error(String(error));
+        } finally {
+          setSyncingSchema(false);
+        }
+      },
+    });
   };
 
   const deleteHistory = (ids: string[]) =>
@@ -361,9 +414,11 @@ function App() {
                   currentRun={currentRun}
                   loadingTables={loadingTaskTables}
                   runningCompare={runningCompare}
-                  onCreate={createTask}
+                  syncingSchema={syncingSchema}
+                  schemaProgress={schemaProgress}
                   onRun={runSchemaCompare}
                   onCopySql={copySql}
+                  onSyncSql={runSchemaSync}
                   onConnectionsChanged={(task) => void loadTaskTables(task)}
                 />
               )}
@@ -436,6 +491,13 @@ function buildDataCompareHistory(runs: DataCompareRun[]): DataCompareHistoryRun 
       .join("\n\n"),
     createdAt,
   };
+}
+
+function countSqlStatements(sql: string) {
+  return sql
+    .split(";")
+    .map((statement) => statement.replace(/--.*$/gm, "").trim())
+    .filter(Boolean).length;
 }
 
 export default App;

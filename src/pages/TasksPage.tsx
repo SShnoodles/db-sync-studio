@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Col, Form, Input, Progress, Row, Select, Space, Table, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import { PlayCircleOutlined } from "@ant-design/icons";
 
@@ -16,12 +16,22 @@ export function TasksPage(props: {
   currentRun?: CompareRun;
   loadingTables: boolean;
   runningCompare: boolean;
-  onCreate: () => void;
+  syncingSchema: boolean;
+  schemaProgress?: {
+    kind: "compare" | "sync";
+    completed: number;
+    total: number;
+    status?: "normal" | "active" | "success" | "exception";
+  };
   onRun: (values: CompareTask) => void;
   onCopySql: (sql: string) => void;
+  onSyncSql: (sql: string) => void;
   onConnectionsChanged: (task: Partial<CompareTask>) => void;
 }) {
   const { t } = useI18n();
+  const schemaProgressPercent = props.schemaProgress
+    ? Math.round((props.schemaProgress.completed / Math.max(props.schemaProgress.total, 1)) * 100)
+    : 0;
   const connectionOptions = props.connections.map((connection) => ({
     value: connection.id,
     label: connectionOptionLabel(connection),
@@ -129,6 +139,16 @@ export function TasksPage(props: {
                         <Button size="small" onClick={() => updateSelectedTables([])}>
                           {t("schema.clearSelection")}
                         </Button>
+                        <Button
+                          size="small"
+                          type="primary"
+                          htmlType="submit"
+                          icon={<PlayCircleOutlined />}
+                          loading={props.runningCompare}
+                          disabled={props.connections.length < 2 || props.syncingSchema}
+                        >
+                          {t("schema.run")}
+                        </Button>
                       </Space>
                     </div>
                     <Table
@@ -150,32 +170,54 @@ export function TasksPage(props: {
                     />
                   </div>
                 ) : (
-                  <Typography.Text type="secondary">
-                    {props.loadingTables ? t("schema.loadingTables") : t("schema.allTablesHint")}
-                  </Typography.Text>
+                  <div className="schema-table-toolbar">
+                    <Typography.Text type="secondary">
+                      {props.loadingTables ? t("schema.loadingTables") : t("schema.allTablesHint")}
+                    </Typography.Text>
+                    <Button
+                      size="small"
+                      type="primary"
+                      htmlType="submit"
+                      icon={<PlayCircleOutlined />}
+                      loading={props.runningCompare}
+                      disabled={props.connections.length < 2 || props.syncingSchema}
+                    >
+                      {t("schema.run")}
+                    </Button>
+                  </div>
                 )}
               </Form.Item>
-              <div className="form-actions">
-                <Button
-                  onClick={props.onCreate}
-                  disabled={props.runningCompare}
-                >
-                  {t("schema.reset")}
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  icon={<PlayCircleOutlined />}
-                  loading={props.runningCompare}
-                  disabled={props.connections.length < 2}
-                >
-                  {t("schema.run")}
-                </Button>
-              </div>
             </Form>
           </Card>
+          {props.schemaProgress && (
+            <div className="schema-progress">
+              <div className="schema-progress-title">
+                <Typography.Text type="secondary">
+                  {props.schemaProgress.kind === "compare" ? t("schema.compareProgress") : t("schema.syncProgress")}
+                </Typography.Text>
+                <Typography.Text type="secondary">
+                  {t("schema.progressCount", {
+                    completed: props.schemaProgress.completed,
+                    total: props.schemaProgress.total,
+                    percent: schemaProgressPercent,
+                  })}
+                </Typography.Text>
+              </div>
+              <Progress
+                percent={schemaProgressPercent}
+                size="small"
+                status={props.schemaProgress.status}
+              />
+            </div>
+          )}
           {props.currentRun && (
-            <CompareResultPanel run={props.currentRun} onCopySql={props.onCopySql} />
+            <CompareResultPanel
+              run={props.currentRun}
+              onCopySql={props.onCopySql}
+              onSyncSql={props.onSyncSql}
+              syncing={props.syncingSchema}
+              syncDisabled={props.runningCompare}
+            />
           )}
         </Col>
       </Row>
