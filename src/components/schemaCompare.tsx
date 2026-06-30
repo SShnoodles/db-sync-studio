@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Key } from "react";
 import { Button, Card, Col, Empty, Row, Space, Statistic, Tag, Tree, Typography } from "antd";
 import type { TreeDataNode } from "antd";
@@ -27,6 +27,9 @@ export function CompareResultPanel({
   const entries = useMemo(() => buildEntries(run.diffs), [run.diffs]);
   const leafKeys = useMemo(() => entries.map((entry) => entry.key), [entries]);
   const [checkedKeys, setCheckedKeys] = useState<string[]>([]);
+  useEffect(() => {
+    setCheckedKeys([]);
+  }, [run.id]);
   const selectedSql = useMemo(
     () =>
       sqlWithTableComments(

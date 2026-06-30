@@ -8,6 +8,7 @@ import { useI18n } from "../i18n";
 import type { DataCompareBatchRequest, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection } from "../types";
 import { connectionOptionLabel } from "../utils/connection";
 import { blankDataCompare } from "../utils/defaults";
+import { formatDuration } from "../utils/format";
 
 type DataOperation = "insert" | "update" | "delete";
 
@@ -51,6 +52,8 @@ export function DataSyncPage({
     kind: "compare" | "sync";
     completed: number;
     total: number;
+    startedAt: number;
+    finishedAt?: number;
     status?: "normal" | "active" | "success" | "exception";
   };
   onRun: (values: DataCompareBatchRequest) => void;
@@ -59,6 +62,7 @@ export function DataSyncPage({
   onConnectionsChanged: (request: Partial<DataCompareRequest>) => void;
 }) {
   const { t } = useI18n();
+  const [nowMs, setNowMs] = useState(Date.now());
   const [selectedTables, setSelectedTables] = useState<React.Key[]>([]);
   const [operationSelection, setOperationSelection] = useState<Record<string, OperationSelection>>({});
 
@@ -76,22 +80,15 @@ export function DataSyncPage({
   );
 
   useEffect(() => {
-    setSelectedTables(selectableTables);
-  }, [selectableTables]);
+    setSelectedTables([]);
+  }, [tableOptions]);
 
   useEffect(() => {
-    setOperationSelection((current) => {
-      const next = { ...current };
-      currentRuns.forEach((run) => {
-        if (next[run.tableName]) return;
-        next[run.tableName] = {
-          insert: run.summary.inserts > 0,
-          update: run.summary.updates > 0,
-          delete: run.summary.deletes > 0,
-        };
-      });
-      return next;
-    });
+    setOperationSelection(
+      Object.fromEntries(
+        currentRuns.map((run) => [run.tableName, emptyOperationSelection]),
+      ),
+    );
   }, [currentRuns]);
 
   const runByTable = useMemo(
@@ -137,6 +134,13 @@ export function DataSyncPage({
   const progressPercent = progress && progress.total > 0
     ? Math.round((progress.completed / progress.total) * 100)
     : 0;
+  const progressElapsedMs = progress ? (progress.finishedAt ?? nowMs) - progress.startedAt : 0;
+
+  useEffect(() => {
+    if (!progress || progress.finishedAt) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [progress]);
 
   const selectedOperationSummary = useMemo(() => {
     const selected = new Set(selectedTables.map(String));
@@ -420,6 +424,7 @@ export function DataSyncPage({
                 completed: progress.completed,
                 total: progress.total,
                 percent: progressPercent,
+                elapsed: formatDuration(progressElapsedMs),
               })}
             </Typography.Text>
           </div>

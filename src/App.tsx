@@ -22,12 +22,16 @@ type SchemaProgress = {
   kind: "compare" | "sync";
   completed: number;
   total: number;
+  startedAt: number;
+  finishedAt?: number;
   status?: "normal" | "active" | "success" | "exception";
 };
 type DataProgress = {
   kind: "compare" | "sync";
   completed: number;
   total: number;
+  startedAt: number;
+  finishedAt?: number;
   status?: "normal" | "active" | "success" | "exception";
 };
 
@@ -193,7 +197,8 @@ function App() {
       const source = connections.find((item) => item.id === values.sourceConnectionId);
       const target = connections.find((item) => item.id === values.targetConnectionId);
       const compareTotal = Math.max(values.selectedTables?.length || taskTables.length || 1, 1);
-      setSchemaProgress({ kind: "compare", completed: 0, total: compareTotal, status: "active" });
+      const startedAt = Date.now();
+      setSchemaProgress({ kind: "compare", completed: 0, total: compareTotal, startedAt, status: "active" });
       const task = {
         ...values,
         id: crypto.randomUUID(),
@@ -206,13 +211,15 @@ function App() {
       const run = await dbSyncApi.runSchemaCompareOnce(task);
       setCurrentRun(run);
       await loadHistory();
-      setSchemaProgress({ kind: "compare", completed: compareTotal, total: compareTotal, status: "success" });
+      setSchemaProgress({ kind: "compare", completed: compareTotal, total: compareTotal, startedAt, finishedAt: Date.now(), status: "success" });
       messageApi.success(t("messages.schemaCompareCompleted", { count: run.summary.totalDiffs }));
     } catch (error) {
       setSchemaProgress((current) => ({
         kind: "compare",
         completed: current?.completed ?? 0,
         total: current?.total ?? 1,
+        startedAt: current?.startedAt ?? Date.now(),
+        finishedAt: Date.now(),
         status: "exception",
       }));
       messageApi.error(String(error));
@@ -224,7 +231,8 @@ function App() {
   const runDataCompare = async (values: DataCompareBatchRequest) => {
     try {
       setRunningDataCompare(true);
-      setDataProgress({ kind: "compare", completed: 0, total: values.tableNames.length, status: "active" });
+      const startedAt = Date.now();
+      setDataProgress({ kind: "compare", completed: 0, total: values.tableNames.length, startedAt, status: "active" });
       const results = await Promise.all(
         values.tableNames.map((tableName) =>
           dbSyncApi
@@ -243,6 +251,7 @@ function App() {
                 kind: "compare",
                 status: "active",
                 total: values.tableNames.length,
+                startedAt,
                 ...current,
                 completed: Math.min((current?.completed ?? 0) + 1, current?.total ?? values.tableNames.length),
               })),
@@ -257,7 +266,7 @@ function App() {
         await dbSyncApi.saveDataCompareHistory(buildDataCompareHistory(runs));
         await loadHistory();
       }
-      setDataProgress({ kind: "compare", completed: values.tableNames.length, total: values.tableNames.length, status: "success" });
+      setDataProgress({ kind: "compare", completed: values.tableNames.length, total: values.tableNames.length, startedAt, finishedAt: Date.now(), status: "success" });
       messageApi.success(t("messages.dataCompareCompleted", { count: diffCount }));
       if (errors.length > 0) {
         messageApi.error(errors.join("\n"));
@@ -267,6 +276,8 @@ function App() {
         kind: "compare",
         completed: current?.completed ?? 0,
         total: current?.total ?? 1,
+        startedAt: current?.startedAt ?? Date.now(),
+        finishedAt: Date.now(),
         status: "exception",
       }));
       messageApi.error(String(error));
@@ -303,20 +314,23 @@ function App() {
         try {
           setSyncingSchema(true);
           const syncTotal = Math.max(countSqlStatements(sql), 1);
-          setSchemaProgress({ kind: "sync", completed: 0, total: syncTotal, status: "active" });
+          const startedAt = Date.now();
+          setSchemaProgress({ kind: "sync", completed: 0, total: syncTotal, startedAt, status: "active" });
           const result = await dbSyncApi.runSchemaSync({
             targetConnectionId,
             sql,
           });
           await loadHistory();
           await loadTaskTables(taskForm.getFieldsValue(true));
-          setSchemaProgress({ kind: "sync", completed: result.executed, total: syncTotal, status: "success" });
+          setSchemaProgress({ kind: "sync", completed: result.executed, total: syncTotal, startedAt, finishedAt: Date.now(), status: "success" });
           messageApi.success(t("messages.schemaSyncApplied", { count: result.executed }));
         } catch (error) {
           setSchemaProgress((current) => ({
             kind: "sync",
             completed: current?.completed ?? 0,
             total: current?.total ?? 1,
+            startedAt: current?.startedAt ?? Date.now(),
+            finishedAt: Date.now(),
             status: "exception",
           }));
           messageApi.error(String(error));
@@ -346,20 +360,23 @@ function App() {
         try {
           setSyncingData(true);
           const syncTotal = Math.max(countSqlStatements(sql), 1);
-          setDataProgress({ kind: "sync", completed: 0, total: syncTotal, status: "active" });
+          const startedAt = Date.now();
+          setDataProgress({ kind: "sync", completed: 0, total: syncTotal, startedAt, status: "active" });
           const result = await dbSyncApi.runDataSync({
             targetConnectionId,
             sql,
           });
           await loadHistory();
           await loadDataTables(dataForm.getFieldsValue(true));
-          setDataProgress({ kind: "sync", completed: result.executed, total: syncTotal, status: "success" });
+          setDataProgress({ kind: "sync", completed: result.executed, total: syncTotal, startedAt, finishedAt: Date.now(), status: "success" });
           messageApi.success(t("messages.dataSyncApplied", { count: result.executed }));
         } catch (error) {
           setDataProgress((current) => ({
             kind: "sync",
             completed: current?.completed ?? 0,
             total: current?.total ?? 1,
+            startedAt: current?.startedAt ?? Date.now(),
+            finishedAt: Date.now(),
             status: "exception",
           }));
           messageApi.error(String(error));

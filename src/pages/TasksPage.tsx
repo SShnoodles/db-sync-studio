@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Alert, Button, Card, Col, Form, Input, Progress, Row, Select, Space, Table, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import { PlayCircleOutlined } from "@ant-design/icons";
@@ -7,6 +8,7 @@ import { useI18n } from "../i18n";
 import type { CompareRun, CompareTask, DbConnection } from "../types";
 import { connectionOptionLabel } from "../utils/connection";
 import { blankTask } from "../utils/defaults";
+import { formatDuration } from "../utils/format";
 import { plainTextInputProps } from "../utils/input";
 
 export function TasksPage(props: {
@@ -21,6 +23,8 @@ export function TasksPage(props: {
     kind: "compare" | "sync";
     completed: number;
     total: number;
+    startedAt: number;
+    finishedAt?: number;
     status?: "normal" | "active" | "success" | "exception";
   };
   onRun: (values: CompareTask) => void;
@@ -29,9 +33,22 @@ export function TasksPage(props: {
   onConnectionsChanged: (task: Partial<CompareTask>) => void;
 }) {
   const { t } = useI18n();
+  const [nowMs, setNowMs] = useState(Date.now());
   const schemaProgressPercent = props.schemaProgress
     ? Math.round((props.schemaProgress.completed / Math.max(props.schemaProgress.total, 1)) * 100)
     : 0;
+  const schemaElapsedMs = props.schemaProgress
+    ? (props.schemaProgress.finishedAt ?? nowMs) - props.schemaProgress.startedAt
+    : 0;
+
+  useEffect(() => {
+    if (!props.schemaProgress || props.schemaProgress.finishedAt) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [props.schemaProgress]);
+  useEffect(() => {
+    props.form.setFieldValue("selectedTables", []);
+  }, [props.form, props.tableOptions]);
   const connectionOptions = props.connections.map((connection) => ({
     value: connection.id,
     label: connectionOptionLabel(connection),
@@ -200,6 +217,7 @@ export function TasksPage(props: {
                     completed: props.schemaProgress.completed,
                     total: props.schemaProgress.total,
                     percent: schemaProgressPercent,
+                    elapsed: formatDuration(schemaElapsedMs),
                   })}
                 </Typography.Text>
               </div>
