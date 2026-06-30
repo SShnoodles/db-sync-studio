@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Col, Empty, Form, Progress, Row, Select, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Col, Form, Progress, Row, Select, Space, Table, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import { PlayCircleOutlined } from "@ant-design/icons";
 
@@ -34,7 +34,6 @@ export function DataSyncPage({
   loadingTables,
   runningCompare,
   compareProgress,
-  onReset,
   onRun,
   onCopySql,
   onConnectionsChanged,
@@ -46,7 +45,6 @@ export function DataSyncPage({
   loadingTables: boolean;
   runningCompare: boolean;
   compareProgress: { completed: number; total: number };
-  onReset: () => void;
   onRun: (values: DataCompareBatchRequest) => void;
   onCopySql: (sql: string) => void;
   onConnectionsChanged: (request: Partial<DataCompareRequest>) => void;
@@ -212,9 +210,10 @@ export function DataSyncPage({
       },
     },
   ];
+  const tableSelectionColumns: TableColumnsType<DataSyncRow> = columns.slice(0, 2);
 
   return (
-    <div className="data-sync-page">
+    <>
       <section className="page-title compact-page-title">
         <div>
           <Typography.Title level={2}>{t("data.title")}</Typography.Title>
@@ -268,112 +267,146 @@ export function DataSyncPage({
               </Form.Item>
             </Col>
           </Row>
-          <div className="data-sync-toolbar">
-            <span />
-            <Space size={8}>
-              <Button onClick={onReset} disabled={runningCompare}>
-                {t("schema.reset")}
-              </Button>
-              <Button
-                type="primary"
-                htmlType="submit"
-                icon={<PlayCircleOutlined />}
-                loading={runningCompare || loadingTables}
-                disabled={connections.length < 2 || selectedTables.length === 0}
-              >
-                {t("data.run")}
-              </Button>
-            </Space>
-          </div>
+          <Form.Item label={t("schema.tables")} tooltip={t("schema.tablesTooltip")}>
+            {rows.length > 0 ? (
+              <div>
+                <div className="schema-table-toolbar">
+                  <Typography.Text type="secondary">
+                    {t("data.selectedTables", { count: selectedTables.length })}
+                  </Typography.Text>
+                  <Space size={8}>
+                    <Button size="small" onClick={() => setSelectedTables(selectableTables)} disabled={selectableTables.length === 0}>
+                      {t("schema.selectAllDiffs")}
+                    </Button>
+                    <Button size="small" onClick={() => setSelectedTables([])} disabled={selectedTables.length === 0}>
+                      {t("schema.clearSelection")}
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      htmlType="submit"
+                      icon={<PlayCircleOutlined />}
+                      loading={runningCompare || loadingTables}
+                      disabled={connections.length < 2 || selectedTables.length === 0}
+                    >
+                      {t("data.run")}
+                    </Button>
+                  </Space>
+                </div>
+                <Table
+                  className="schema-table-list data-sync-table"
+                  rowKey="tableName"
+                  size="small"
+                  columns={tableSelectionColumns}
+                  dataSource={rows}
+                  pagination={false}
+                  loading={loadingTables}
+                  scroll={{ y: 304, x: 520 }}
+                  rowSelection={{
+                    selectedRowKeys: selectedTables,
+                    onChange: setSelectedTables,
+                    getCheckboxProps: (row) => ({
+                      disabled: !row.sourceExists || !row.targetExists,
+                    }),
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="schema-table-toolbar">
+                <Typography.Text type="secondary">
+                  {loadingTables ? t("schema.loadingTables") : t("data.noTables")}
+                </Typography.Text>
+                <Button
+                  size="small"
+                  type="primary"
+                  htmlType="submit"
+                  icon={<PlayCircleOutlined />}
+                  loading={runningCompare || loadingTables}
+                  disabled={connections.length < 2 || selectedTables.length === 0}
+                >
+                  {t("data.run")}
+                </Button>
+              </div>
+            )}
+          </Form.Item>
         </Form>
-        {rows.length > 0 ? (
-          <>
-            <div className="data-sync-selected-summary">
-              <div className="data-sync-selected-stat data-sync-selected-tables-stat">
-                <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>
-                <span className="data-sync-selected-stat-value">{selectedTables.length}</span>
-              </div>
-              <div className="data-sync-selected-stat data-sync-selected-diffs-stat">
-                <span className="data-sync-selected-stat-title">{t("stats.diffs")}</span>
-                <span className="data-sync-selected-stat-value">{selectedSqlCount}</span>
-              </div>
-              <div className="data-sync-selected-stat data-sync-selected-insert-stat">
-                <span className="data-sync-selected-stat-title">{t("data.insert")}</span>
-                <span className="data-sync-selected-stat-value operation-count-insert">{selectedOperationSummary.insert}</span>
-              </div>
-              <div className="data-sync-selected-stat data-sync-selected-update-stat">
-                <span className="data-sync-selected-stat-title">{t("data.update")}</span>
-                <span className="data-sync-selected-stat-value operation-count-update">{selectedOperationSummary.update}</span>
-              </div>
-              <div className="data-sync-selected-stat data-sync-selected-delete-stat">
-                <span className="data-sync-selected-stat-title">{t("data.delete")}</span>
-                <span className="data-sync-selected-stat-value operation-count-delete">{selectedOperationSummary.delete}</span>
-              </div>
-              <div className="data-sync-selected-stat data-sync-selected-same-stat">
-                <span className="data-sync-selected-stat-title">{t("data.same")}</span>
-                <span className="data-sync-selected-stat-value">{selectedOperationSummary.same}</span>
-              </div>
-            </div>
-            <div className="data-sync-table-actions">
-              <Button size="small" onClick={() => setSelectedTables(selectableTables)} disabled={selectableTables.length === 0}>
-                {t("schema.selectAllDiffs")}
-              </Button>
-              <Button size="small" onClick={() => setSelectedTables([])} disabled={selectedTables.length === 0}>
-                {t("schema.clearSelection")}
-              </Button>
-            </div>
-            <Table
-              className="data-sync-table"
-              rowKey="tableName"
-              size="small"
-              columns={columns}
-              dataSource={rows}
-              pagination={false}
-              scroll={{ y: "clamp(260px, 34vh, 460px)", x: 970 }}
-              rowSelection={{
-                selectedRowKeys: selectedTables,
-                onChange: setSelectedTables,
-                getCheckboxProps: (row) => ({
-                  disabled: !row.sourceExists || !row.targetExists,
-                }),
-              }}
-            />
-          </>
-        ) : (
-          <Empty className="compact-empty" description={loadingTables ? t("schema.loadingTables") : t("data.noTables")} />
-        )}
       </Card>
       {currentRuns.length > 0 && (
         <Card
           className="compare-result-card"
-          title={t("schema.generatedSql")}
-          extra={
-            <Space size={8}>
+          title={t("data.latestResult")}
+        >
+          <div className="data-sync-selected-summary">
+            <div className="data-sync-selected-stat data-sync-selected-tables-stat">
+              <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>
+              <span className="data-sync-selected-stat-value">{selectedTables.length}</span>
+            </div>
+            <div className="data-sync-selected-stat data-sync-selected-diffs-stat">
+              <span className="data-sync-selected-stat-title">{t("stats.diffs")}</span>
+              <span className="data-sync-selected-stat-value">{selectedSqlCount}</span>
+            </div>
+            <div className="data-sync-selected-stat data-sync-selected-insert-stat">
+              <span className="data-sync-selected-stat-title">{t("data.insert")}</span>
+              <span className="data-sync-selected-stat-value operation-count-insert">{selectedOperationSummary.insert}</span>
+            </div>
+            <div className="data-sync-selected-stat data-sync-selected-update-stat">
+              <span className="data-sync-selected-stat-title">{t("data.update")}</span>
+              <span className="data-sync-selected-stat-value operation-count-update">{selectedOperationSummary.update}</span>
+            </div>
+            <div className="data-sync-selected-stat data-sync-selected-delete-stat">
+              <span className="data-sync-selected-stat-title">{t("data.delete")}</span>
+              <span className="data-sync-selected-stat-value operation-count-delete">{selectedOperationSummary.delete}</span>
+            </div>
+            <div className="data-sync-selected-stat data-sync-selected-same-stat">
+              <span className="data-sync-selected-stat-title">{t("data.same")}</span>
+              <span className="data-sync-selected-stat-value">{selectedOperationSummary.same}</span>
+            </div>
+          </div>
+          <Table
+            className="data-sync-table"
+            rowKey="tableName"
+            size="small"
+            columns={columns}
+            dataSource={rows}
+            pagination={false}
+            scroll={{ y: "clamp(260px, 34vh, 460px)", x: 970 }}
+            rowSelection={{
+              selectedRowKeys: selectedTables,
+              onChange: setSelectedTables,
+              getCheckboxProps: (row) => ({
+                disabled: !row.sourceExists || !row.targetExists,
+              }),
+            }}
+          />
+          <section className="sql-preview">
+            <div className="sql-preview-title">
+              <Typography.Title level={5}>{t("schema.generatedSql")}</Typography.Title>
               <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
                 {t("common.copySql")}
               </Button>
-            </Space>
-          }
-        >
-          <section className="sql-preview data-sql-preview">
+            </div>
             <SqlCodePreview sql={selectedSql || t("data.noGeneratedSql")} />
           </section>
         </Card>
       )}
-      {runningCompare && compareProgress.total > 0 && (
+      {compareProgress.total > 0 && (
         <div className="data-sync-progress">
-          <div className="data-sync-progress-title">
+          <div className="schema-progress-title">
             <Typography.Text type="secondary">
-              {t("data.compareProgress", {
+              {t("data.compareProgressTitle")}
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              {t("schema.progressCount", {
                 completed: compareProgress.completed,
                 total: compareProgress.total,
+                percent: progressPercent,
               })}
             </Typography.Text>
           </div>
-          <Progress percent={progressPercent} size="small" />
+          <Progress percent={progressPercent} size="small" status={runningCompare ? "active" : "success"} />
         </div>
       )}
-    </div>
+    </>
   );
 }
 

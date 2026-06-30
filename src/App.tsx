@@ -15,7 +15,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryFilter, HistoryRun, Page } from "./types";
-import { blankConnection, blankDataCompare, now } from "./utils/defaults";
+import { blankConnection, now } from "./utils/defaults";
 
 type ThemeMode = "light" | "dark";
 type SchemaProgress = {
@@ -212,14 +212,6 @@ function App() {
     } finally {
       setRunningCompare(false);
     }
-  };
-
-  const resetDataCompare = () => {
-    setCurrentDataRuns([]);
-    setDataTables([]);
-    setDataCompareProgress({ completed: 0, total: 0 });
-    dataForm.setFieldsValue(blankDataCompare());
-    setPage("dataSync");
   };
 
   const runDataCompare = async (values: DataCompareBatchRequest) => {
@@ -431,7 +423,6 @@ function App() {
                   loadingTables={loadingDataTables}
                   runningCompare={runningDataCompare}
                   compareProgress={dataCompareProgress}
-                  onReset={resetDataCompare}
                   onRun={runDataCompare}
                   onCopySql={copySql}
                   onConnectionsChanged={(request) => void loadDataTables(request)}
