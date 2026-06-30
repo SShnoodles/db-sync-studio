@@ -33,9 +33,11 @@ export function DataSyncPage({
   currentRuns,
   loadingTables,
   runningCompare,
-  compareProgress,
+  syncingData,
+  progress,
   onRun,
   onCopySql,
+  onSyncSql,
   onConnectionsChanged,
 }: {
   connections: DbConnection[];
@@ -44,9 +46,16 @@ export function DataSyncPage({
   currentRuns: DataCompareRun[];
   loadingTables: boolean;
   runningCompare: boolean;
-  compareProgress: { completed: number; total: number };
+  syncingData: boolean;
+  progress?: {
+    kind: "compare" | "sync";
+    completed: number;
+    total: number;
+    status?: "normal" | "active" | "success" | "exception";
+  };
   onRun: (values: DataCompareBatchRequest) => void;
   onCopySql: (sql: string) => void;
+  onSyncSql: (sql: string) => void;
   onConnectionsChanged: (request: Partial<DataCompareRequest>) => void;
 }) {
   const { t } = useI18n();
@@ -125,8 +134,8 @@ export function DataSyncPage({
       }, 0);
   }, [currentRuns, operationSelection, selectedTables]);
 
-  const progressPercent = compareProgress.total > 0
-    ? Math.round((compareProgress.completed / compareProgress.total) * 100)
+  const progressPercent = progress && progress.total > 0
+    ? Math.round((progress.completed / progress.total) * 100)
     : 0;
 
   const selectedOperationSummary = useMemo(() => {
@@ -287,7 +296,7 @@ export function DataSyncPage({
                       htmlType="submit"
                       icon={<PlayCircleOutlined />}
                       loading={runningCompare || loadingTables}
-                      disabled={connections.length < 2 || selectedTables.length === 0}
+                      disabled={connections.length < 2 || selectedTables.length === 0 || syncingData}
                     >
                       {t("data.run")}
                     </Button>
@@ -322,7 +331,7 @@ export function DataSyncPage({
                   htmlType="submit"
                   icon={<PlayCircleOutlined />}
                   loading={runningCompare || loadingTables}
-                  disabled={connections.length < 2 || selectedTables.length === 0}
+                  disabled={connections.length < 2 || selectedTables.length === 0 || syncingData}
                 >
                   {t("data.run")}
                 </Button>
@@ -381,29 +390,40 @@ export function DataSyncPage({
           <section className="sql-preview">
             <div className="sql-preview-title">
               <Typography.Title level={5}>{t("schema.generatedSql")}</Typography.Title>
-              <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
-                {t("common.copySql")}
-              </Button>
+              <Space size={8}>
+                <Button size="small" type="primary" onClick={() => onCopySql(selectedSql)}>
+                  {t("common.copySql")}
+                </Button>
+                <Button
+                  size="small"
+                  danger
+                  loading={syncingData}
+                  disabled={runningCompare || !selectedSql.trim()}
+                  onClick={() => onSyncSql(selectedSql)}
+                >
+                  {t("schema.sync")}
+                </Button>
+              </Space>
             </div>
             <SqlCodePreview sql={selectedSql || t("data.noGeneratedSql")} />
           </section>
         </Card>
       )}
-      {compareProgress.total > 0 && (
+      {progress && progress.total > 0 && (
         <div className="data-sync-progress">
           <div className="schema-progress-title">
             <Typography.Text type="secondary">
-              {t("data.compareProgressTitle")}
+              {progress.kind === "compare" ? t("data.compareProgressTitle") : t("data.syncProgressTitle")}
             </Typography.Text>
             <Typography.Text type="secondary">
               {t("schema.progressCount", {
-                completed: compareProgress.completed,
-                total: compareProgress.total,
+                completed: progress.completed,
+                total: progress.total,
                 percent: progressPercent,
               })}
             </Typography.Text>
           </div>
-          <Progress percent={progressPercent} size="small" status={runningCompare ? "active" : "success"} />
+          <Progress percent={progressPercent} size="small" status={progress.status || (runningCompare || syncingData ? "active" : "success")} />
         </div>
       )}
     </>

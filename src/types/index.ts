@@ -104,6 +104,16 @@ export type DataCompareBatchRequest = {
   tableNames: string[];
 };
 
+export type DataSyncRequest = {
+  targetConnectionId: string;
+  sql: string;
+};
+
+export type DataSyncResult = {
+  executed: number;
+  skipped: number;
+};
+
 export type ChangedColumn = {
   columnName: string;
   sourceValue: unknown;

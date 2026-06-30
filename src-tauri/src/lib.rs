@@ -38,6 +38,7 @@ pub fn run() {
             commands::compare_commands::delete_compare_history,
             commands::compare_commands::clear_compare_history,
             commands::compare_commands::run_data_compare,
+            commands::compare_commands::run_data_sync,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

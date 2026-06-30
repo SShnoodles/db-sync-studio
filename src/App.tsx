@@ -24,6 +24,12 @@ type SchemaProgress = {
   total: number;
   status?: "normal" | "active" | "success" | "exception";
 };
+type DataProgress = {
+  kind: "compare" | "sync";
+  completed: number;
+  total: number;
+  status?: "normal" | "active" | "success" | "exception";
+};
 
 function initialThemeMode(): ThemeMode {
   return localStorage.getItem("db-sync-studio.theme") === "dark" ? "dark" : "light";
@@ -48,8 +54,9 @@ function App() {
   const [runningCompare, setRunningCompare] = useState(false);
   const [runningDataCompare, setRunningDataCompare] = useState(false);
   const [syncingSchema, setSyncingSchema] = useState(false);
+  const [syncingData, setSyncingData] = useState(false);
   const [schemaProgress, setSchemaProgress] = useState<SchemaProgress>();
-  const [dataCompareProgress, setDataCompareProgress] = useState({ completed: 0, total: 0 });
+  const [dataProgress, setDataProgress] = useState<DataProgress>();
   const [form] = Form.useForm<DbConnection>();
   const [taskForm] = Form.useForm<CompareTask>();
   const [dataForm] = Form.useForm<DataCompareRequest>();
@@ -217,7 +224,7 @@ function App() {
   const runDataCompare = async (values: DataCompareBatchRequest) => {
     try {
       setRunningDataCompare(true);
-      setDataCompareProgress({ completed: 0, total: values.tableNames.length });
+      setDataProgress({ kind: "compare", completed: 0, total: values.tableNames.length, status: "active" });
       const results = await Promise.all(
         values.tableNames.map((tableName) =>
           dbSyncApi
@@ -232,9 +239,12 @@ function App() {
             .then((run) => ({ tableName, run }))
             .catch((error) => ({ tableName, error: String(error) }))
             .finally(() =>
-              setDataCompareProgress((current) => ({
+              setDataProgress((current) => ({
+                kind: "compare",
+                status: "active",
+                total: values.tableNames.length,
                 ...current,
-                completed: Math.min(current.completed + 1, current.total),
+                completed: Math.min((current?.completed ?? 0) + 1, current?.total ?? values.tableNames.length),
               })),
             ),
         ),
@@ -247,11 +257,18 @@ function App() {
         await dbSyncApi.saveDataCompareHistory(buildDataCompareHistory(runs));
         await loadHistory();
       }
+      setDataProgress({ kind: "compare", completed: values.tableNames.length, total: values.tableNames.length, status: "success" });
       messageApi.success(t("messages.dataCompareCompleted", { count: diffCount }));
       if (errors.length > 0) {
         messageApi.error(errors.join("\n"));
       }
     } catch (error) {
+      setDataProgress((current) => ({
+        kind: "compare",
+        completed: current?.completed ?? 0,
+        total: current?.total ?? 1,
+        status: "exception",
+      }));
       messageApi.error(String(error));
     } finally {
       setRunningDataCompare(false);
@@ -305,6 +322,49 @@ function App() {
           messageApi.error(String(error));
         } finally {
           setSyncingSchema(false);
+        }
+      },
+    });
+  };
+
+  const runDataSync = (sql: string) => {
+    if (!sql.trim()) {
+      messageApi.info(t("messages.noSqlToSync"));
+      return;
+    }
+    const targetConnectionId = dataForm.getFieldValue("targetConnectionId");
+    if (!targetConnectionId) {
+      messageApi.error(t("schema.selectTarget"));
+      return;
+    }
+    Modal.confirm({
+      title: t("modal.dataSyncTitle"),
+      content: t("modal.dataSyncContent"),
+      okText: t("schema.sync"),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          setSyncingData(true);
+          const syncTotal = Math.max(countSqlStatements(sql), 1);
+          setDataProgress({ kind: "sync", completed: 0, total: syncTotal, status: "active" });
+          const result = await dbSyncApi.runDataSync({
+            targetConnectionId,
+            sql,
+          });
+          await loadHistory();
+          await loadDataTables(dataForm.getFieldsValue(true));
+          setDataProgress({ kind: "sync", completed: result.executed, total: syncTotal, status: "success" });
+          messageApi.success(t("messages.dataSyncApplied", { count: result.executed }));
+        } catch (error) {
+          setDataProgress((current) => ({
+            kind: "sync",
+            completed: current?.completed ?? 0,
+            total: current?.total ?? 1,
+            status: "exception",
+          }));
+          messageApi.error(String(error));
+        } finally {
+          setSyncingData(false);
         }
       },
     });
@@ -422,9 +482,11 @@ function App() {
                   currentRuns={currentDataRuns}
                   loadingTables={loadingDataTables}
                   runningCompare={runningDataCompare}
-                  compareProgress={dataCompareProgress}
+                  syncingData={syncingData}
+                  progress={dataProgress}
                   onRun={runDataCompare}
                   onCopySql={copySql}
+                  onSyncSql={runDataSync}
                   onConnectionsChanged={(request) => void loadDataTables(request)}
                 />
               )}

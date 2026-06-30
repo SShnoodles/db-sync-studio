@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     db::{
         self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRun, DataCompareRequest,
-        DataCompareRun, SchemaSyncRequest, SchemaSyncResult,
+        DataCompareRun, DataSyncRequest, DataSyncResult, SchemaSyncRequest, SchemaSyncResult,
     },
     diff,
     storage::LocalStore,
@@ -240,6 +240,16 @@ pub fn run_data_compare(
         sync_sql,
         created_at,
     })
+}
+
+#[tauri::command]
+pub fn run_data_sync(
+    request: DataSyncRequest,
+    store: State<'_, LocalStore>,
+) -> Result<DataSyncResult, String> {
+    request.validate()?;
+    let target = store.get_connection(&request.target_connection_id)?;
+    db::execute_data_sql(&target, &request.sql)
 }
 
 fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {

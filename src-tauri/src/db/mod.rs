@@ -111,26 +111,17 @@ pub fn execute_schema_sql(
     connection: &DbConnection,
     sql: &str,
 ) -> Result<SchemaSyncResult, String> {
-    let statements = split_sql_statements(sql)
-        .into_iter()
-        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
-        .collect::<Vec<_>>();
-    if statements.is_empty() {
-        return Ok(SchemaSyncResult {
-            executed: 0,
-            skipped: 0,
-        });
-    }
-
-    match connection.db_type.as_str() {
-        "mysql" => mysql::execute_schema_statements(connection, &statements)?,
-        "postgresql" => postgres::execute_schema_statements(connection, &statements)?,
-        "sqlite" => sqlite::execute_schema_statements(connection, &statements)?,
-        _ => return Err("Unsupported database type".into()),
-    }
-
+    let executed = execute_sql(connection, sql)?;
     Ok(SchemaSyncResult {
-        executed: statements.len(),
+        executed,
+        skipped: 0,
+    })
+}
+
+pub fn execute_data_sql(connection: &DbConnection, sql: &str) -> Result<DataSyncResult, String> {
+    let executed = execute_sql(connection, sql)?;
+    Ok(DataSyncResult {
+        executed,
         skipped: 0,
     })
 }
@@ -212,6 +203,32 @@ impl SchemaSyncRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaSyncResult {
+    pub executed: usize,
+    pub skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSyncRequest {
+    pub target_connection_id: String,
+    pub sql: String,
+}
+
+impl DataSyncRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.target_connection_id.trim().is_empty() {
+            return Err("Target connection is required".into());
+        }
+        if self.sql.trim().is_empty() {
+            return Err("SQL is required".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSyncResult {
     pub executed: usize,
     pub skipped: usize,
 }
@@ -329,6 +346,25 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         statements.push(trailing.to_string());
     }
     statements
+}
+
+fn execute_sql(connection: &DbConnection, sql: &str) -> Result<usize, String> {
+    let statements = split_sql_statements(sql)
+        .into_iter()
+        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
+        .collect::<Vec<_>>();
+    if statements.is_empty() {
+        return Ok(0);
+    }
+
+    match connection.db_type.as_str() {
+        "mysql" => mysql::execute_schema_statements(connection, &statements)?,
+        "postgresql" => postgres::execute_schema_statements(connection, &statements)?,
+        "sqlite" => sqlite::execute_schema_statements(connection, &statements)?,
+        _ => return Err("Unsupported database type".into()),
+    }
+
+    Ok(statements.len())
 }
 
 fn strip_sql_comments(sql: &str) -> String {
