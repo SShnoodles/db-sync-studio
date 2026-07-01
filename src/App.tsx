@@ -14,7 +14,7 @@ import { HistoryPage } from "./pages/HistoryPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
-import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryFilter, HistoryRun, Page } from "./types";
+import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryRun, Page } from "./types";
 import { blankConnection, now } from "./utils/defaults";
 
 type ThemeMode = "light" | "dark";
@@ -45,6 +45,9 @@ function App() {
   const [page, setPage] = useState<Page>("overview");
   const [connections, setConnections] = useState<DbConnection[]>([]);
   const [history, setHistory] = useState<HistoryRun[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyCounts, setHistoryCounts] = useState<HistoryCounts>({ total: 0, schema: 0, data: 0 });
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>({ syncType: "all" });
   const [selectedId, setSelectedId] = useState<string>();
   const [taskTables, setTaskTables] = useState<string[]>([]);
@@ -90,9 +93,29 @@ function App() {
     }
   };
 
-  const loadHistory = async (filter = historyFilter) => {
+  const historyPageSize = 3;
+  const loadHistory = async (
+    filter = historyFilter,
+    nextPage = historyPage,
+    nextPageSize = historyPageSize,
+  ) => {
     try {
-      setHistory(await dbSyncApi.listCompareHistory(filter));
+      const result = await dbSyncApi.listCompareHistory({
+        ...filter,
+        page: nextPage,
+        pageSize: nextPageSize,
+      });
+      setHistory(result.items);
+      setHistoryTotal(result.total);
+      setHistoryPage(nextPage);
+    } catch (error) {
+      messageApi.error(String(error));
+    }
+  };
+
+  const loadHistoryCounts = async () => {
+    try {
+      setHistoryCounts(await dbSyncApi.getCompareHistoryCounts());
     } catch (error) {
       messageApi.error(String(error));
     }
@@ -100,12 +123,19 @@ function App() {
 
   const searchHistory = async (filter: HistoryFilter) => {
     setHistoryFilter(filter);
-    await loadHistory(filter);
+    await loadHistory(filter, 1);
   };
+
+  const changeHistoryPage = async (nextPage: number) => {
+    await loadHistory(historyFilter, nextPage);
+  };
+
+  const loadHistoryDetail = async (id: string) => dbSyncApi.getCompareHistory(id);
 
   useEffect(() => {
     void loadConnections();
     void loadHistory();
+    void loadHistoryCounts();
   }, []);
 
   const loadIntoForm = (connection: DbConnection) => {
@@ -210,7 +240,8 @@ function App() {
       };
       const run = await dbSyncApi.runSchemaCompareOnce(task);
       setCurrentRun(run);
-      await loadHistory();
+      await loadHistory(historyFilter, historyPage);
+      await loadHistoryCounts();
       setSchemaProgress({ kind: "compare", completed: compareTotal, total: compareTotal, startedAt, finishedAt: Date.now(), status: "success" });
       messageApi.success(t("messages.schemaCompareCompleted", { count: run.summary.totalDiffs }));
     } catch (error) {
@@ -264,7 +295,8 @@ function App() {
       const diffCount = runs.reduce((sum, run) => sum + run.summary.totalDiffs, 0);
       if (runs.length > 0) {
         await dbSyncApi.saveDataCompareHistory(buildDataCompareHistory(runs));
-        await loadHistory();
+        await loadHistory(historyFilter, historyPage);
+        await loadHistoryCounts();
       }
       setDataProgress({ kind: "compare", completed: values.tableNames.length, total: values.tableNames.length, startedAt, finishedAt: Date.now(), status: "success" });
       messageApi.success(t("messages.dataCompareCompleted", { count: diffCount }));
@@ -320,7 +352,8 @@ function App() {
             targetConnectionId,
             sql,
           });
-          await loadHistory();
+          await loadHistory(historyFilter, historyPage);
+          await loadHistoryCounts();
           await loadTaskTables(taskForm.getFieldsValue(true));
           setSchemaProgress({ kind: "sync", completed: result.executed, total: syncTotal, startedAt, finishedAt: Date.now(), status: "success" });
           messageApi.success(t("messages.schemaSyncApplied", { count: result.executed }));
@@ -366,7 +399,8 @@ function App() {
             targetConnectionId,
             sql,
           });
-          await loadHistory();
+          await loadHistory(historyFilter, historyPage);
+          await loadHistoryCounts();
           await loadDataTables(dataForm.getFieldsValue(true));
           setDataProgress({ kind: "sync", completed: result.executed, total: syncTotal, startedAt, finishedAt: Date.now(), status: "success" });
           messageApi.success(t("messages.dataSyncApplied", { count: result.executed }));
@@ -395,7 +429,9 @@ function App() {
       okButtonProps: { danger: true },
       onOk: async () => {
         await dbSyncApi.deleteCompareHistory(ids);
-        await loadHistory(historyFilter);
+        const nextPage = history.length === ids.length && historyPage > 1 ? historyPage - 1 : historyPage;
+        await loadHistory(historyFilter, nextPage);
+        await loadHistoryCounts();
         messageApi.success(t("messages.historyDeleted"));
       },
     });
@@ -408,7 +444,8 @@ function App() {
       okButtonProps: { danger: true },
       onOk: async () => {
         await dbSyncApi.clearCompareHistory();
-        await loadHistory(historyFilter);
+        await loadHistory(historyFilter, 1);
+        await loadHistoryCounts();
         messageApi.success(t("messages.historyCleared"));
       },
     });
@@ -456,6 +493,7 @@ function App() {
                 <OverviewPage
                   connections={connections}
                   history={history}
+                  historyCounts={historyCounts}
                   onCreate={createConnection}
                   onConnections={() => setPage("connections")}
                 />
@@ -510,10 +548,15 @@ function App() {
               {page === "history" && (
                 <HistoryPage
                   history={history}
+                  total={historyTotal}
+                  page={historyPage}
+                  pageSize={historyPageSize}
                   onCopySql={copySql}
+                  onLoadDetail={loadHistoryDetail}
                   onDelete={deleteHistory}
                   onClear={clearHistory}
                   onSearch={searchHistory}
+                  onPageChange={changeHistoryPage}
                 />
               )}
               {page === "settings" && (

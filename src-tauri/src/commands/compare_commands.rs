@@ -168,8 +168,10 @@ pub fn list_compare_history(
     start_time: Option<String>,
     end_time: Option<String>,
     search_content: Option<String>,
+    page: Option<usize>,
+    page_size: Option<usize>,
     store: State<'_, LocalStore>,
-) -> Result<Vec<Value>, String> {
+) -> Result<Value, String> {
     let sync_type = match sync_type.as_deref() {
         Some("schema") | Some("data") => sync_type,
         _ => None,
@@ -181,13 +183,29 @@ pub fn list_compare_history(
     let search_content = search_content
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    store.list_history(
+    let (items, total) = store.list_history(
         sync_type,
         database_type,
         start_time,
         end_time,
         search_content,
-    )
+        page.unwrap_or(1),
+        page_size.unwrap_or(3),
+    )?;
+    Ok(serde_json::json!({
+        "items": items,
+        "total": total,
+    }))
+}
+
+#[tauri::command]
+pub fn get_compare_history(id: String, store: State<'_, LocalStore>) -> Result<Value, String> {
+    store.get_history(&id)
+}
+
+#[tauri::command]
+pub fn get_compare_history_counts(store: State<'_, LocalStore>) -> Result<Value, String> {
+    store.history_counts()
 }
 
 #[tauri::command]

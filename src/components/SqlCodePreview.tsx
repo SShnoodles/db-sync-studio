@@ -3,10 +3,18 @@ import type { ReactNode } from "react";
 const sqlTokenPattern =
   /(--.*$)|('[^']*(?:''[^']*)*')|(`[^`]+`)|\b(SELECT|INSERT|INTO|VALUES|UPDATE|SET|DELETE|FROM|WHERE|AND|OR|NULL|IS|NOT|CREATE|ALTER|TABLE|ADD|DROP|MODIFY|CHANGE|PRIMARY|KEY|DEFAULT|CURRENT_TIMESTAMP|ON|DUPLICATE|ORDER|BY|GROUP|LIMIT|JOIN|LEFT|RIGHT|INNER|OUTER|AS|DISTINCT|INDEX|CONSTRAINT|UNIQUE|REFERENCES|AUTO_INCREMENT|COMMENT|COLUMN|RENAME|TO)\b|(\b\d+(?:\.\d+)?\b)/gi;
 
-export function SqlCodePreview({ sql }: { sql: string }) {
+export function SqlCodePreview({ sql, maxLines = 500 }: { sql: string; maxLines?: number }) {
+  const lines = sql.split("\n");
+  const visibleLines = lines.length > maxLines
+    ? [
+        ...lines.slice(0, maxLines),
+        `-- Preview truncated: ${lines.length - maxLines} more line(s). Use Copy SQL to get the full content.`,
+      ]
+    : lines;
+
   return (
     <pre>
-      {sql.split("\n").map((line, index) => (
+      {visibleLines.map((line, index) => (
         <span className="sql-line" key={`${index}-${line}`}>
           <span className="sql-line-number">{index + 1}</span>
           <span className="sql-line-code">{line ? highlightSql(line) : " "}</span>

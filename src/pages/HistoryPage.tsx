@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Input, Pagination, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 
@@ -7,36 +7,43 @@ import { useI18n } from "../i18n";
 import type { DataCompareRun, HistoryFilter, HistoryRun } from "../types";
 import { formatDate } from "../utils/format";
 
-const pageSize = 3;
 type HistoryTypeFilter = "all" | "schema" | "data";
 type DatabaseTypeFilter = "all" | "mysql" | "postgresql" | "sqlite";
 type TimeRange = Parameters<NonNullable<React.ComponentProps<typeof DatePicker.RangePicker>["onChange"]>>[0];
 
 export function HistoryPage({
   history,
+  total,
+  page,
+  pageSize,
   onCopySql,
+  onLoadDetail,
   onDelete,
   onClear,
   onSearch,
+  onPageChange,
 }: {
   history: HistoryRun[];
+  total: number;
+  page: number;
+  pageSize: number;
   onCopySql: (sql: string) => void;
+  onLoadDetail: (id: string) => Promise<HistoryRun>;
   onDelete: (ids: string[]) => void;
   onClear: () => void;
   onSearch: (filter: HistoryFilter) => void;
+  onPageChange: (page: number) => void;
 }) {
   const { t } = useI18n();
-  const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState<HistoryTypeFilter>("all");
   const [databaseTypeFilter, setDatabaseTypeFilter] = useState<DatabaseTypeFilter>("all");
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
   const [searchContent, setSearchContent] = useState("");
-  const pageItems = useMemo(
-    () => history.slice((page - 1) * pageSize, page * pageSize),
-    [history, page],
-  );
-  const maxPage = Math.max(1, Math.ceil(history.length / pageSize));
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [details, setDetails] = useState<Record<string, HistoryRun>>({});
+  const [loadingIds, setLoadingIds] = useState<string[]>([]);
+  const pageItems = history;
   const pageIds = pageItems.map((item) => item.id);
   const allPageSelected =
     pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
@@ -58,17 +65,14 @@ export function HistoryPage({
   };
 
   useEffect(() => {
-    if (page > maxPage) {
-      setPage(maxPage);
-    }
     setSelectedIds((current) =>
       current.filter((id) => history.some((item) => item.id === id)),
     );
-  }, [history, maxPage, page]);
+  }, [history]);
 
   const submitSearch = () => {
-    setPage(1);
     setSelectedIds([]);
+    setExpandedIds([]);
     onSearch({
       syncType: typeFilter,
       databaseType: databaseTypeFilter,
@@ -76,6 +80,38 @@ export function HistoryPage({
       endTime: timeRange?.[1]?.endOf("day").toISOString(),
       searchContent: searchContent.trim() || undefined,
     });
+  };
+
+  const loadDetail = async (id: string) => {
+    if (details[id]) return details[id];
+    setLoadingIds((current) => Array.from(new Set([...current, id])));
+    try {
+      const detail = await onLoadDetail(id);
+      setDetails((current) => ({ ...current, [id]: detail }));
+      return detail;
+    } finally {
+      setLoadingIds((current) => current.filter((item) => item !== id));
+    }
+  };
+
+  const toggleDetail = async (id: string) => {
+    if (expandedIds.includes(id)) {
+      setExpandedIds((current) => current.filter((item) => item !== id));
+      return;
+    }
+    await loadDetail(id);
+    setExpandedIds((current) => Array.from(new Set([...current, id])));
+  };
+
+  const copyHistorySql = async (run: HistoryRun) => {
+    const detail = details[run.id] || await loadDetail(run.id);
+    onCopySql(detail.syncSql);
+  };
+
+  const changePage = (nextPage: number) => {
+    setSelectedIds([]);
+    setExpandedIds([]);
+    onPageChange(nextPage);
   };
 
   return (
@@ -146,7 +182,7 @@ export function HistoryPage({
           >
             {t("history.deleteSelected")}
           </Button>
-          <Button danger disabled={history.length === 0} onClick={onClear}>
+          <Button danger disabled={total === 0} onClick={onClear}>
             {t("history.clearAll")}
           </Button>
         </Space>
@@ -187,9 +223,22 @@ export function HistoryPage({
                   </Space>
                 }
                 extra={
-                  <Button size="small" onClick={() => onCopySql(run.syncSql)}>
-                    {t("common.copySql")}
-                  </Button>
+                  <Space size={8}>
+                    <Button
+                      size="small"
+                      loading={loadingIds.includes(run.id)}
+                      onClick={() => toggleDetail(run.id)}
+                    >
+                      {expandedIds.includes(run.id) ? t("history.hideDetails") : t("history.viewDetails")}
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => void copyHistorySql(run)}
+                      loading={loadingIds.includes(run.id)}
+                    >
+                      {t("common.copySql")}
+                    </Button>
+                  </Space>
                 }
               >
                 <Descriptions
@@ -203,14 +252,20 @@ export function HistoryPage({
                   ]}
                 />
                 {isDataHistory(run) ? (
-                  <DataHistorySummary run={run} />
+                  <DataHistoryStats run={run} />
                 ) : (
-                  <>
-                    <SummaryStats summary={run.summary} diffs={run.diffs} />
-                    <DiffTable diffs={run.diffs} compact />
-                  </>
+                  <SummaryStats summary={run.summary} />
                 )}
-                <SqlPreview sql={run.syncSql} />
+                {expandedIds.includes(run.id) && details[run.id] && (
+                  isDataHistory(details[run.id]) ? (
+                    <DataHistoryDetail run={details[run.id] as Extract<HistoryRun, { runType: "data" }>} />
+                  ) : (
+                    <DiffTable diffs={(details[run.id] as Exclude<HistoryRun, { runType: "data" }>).diffs} compact />
+                  )
+                )}
+                {expandedIds.includes(run.id) && details[run.id] && (
+                  <SqlPreview sql={details[run.id].syncSql} />
+                )}
               </Card>
             )) : (
               <Card>
@@ -222,11 +277,11 @@ export function HistoryPage({
             <Pagination
               current={page}
               pageSize={pageSize}
-              total={history.length}
+              total={total}
               size="small"
               showSizeChanger={false}
               showTotal={(total) => t("history.total", { count: total })}
-              onChange={setPage}
+              onChange={changePage}
             />
           </div>
         </>
@@ -244,7 +299,34 @@ function isDataHistory(run: HistoryRun): run is Extract<HistoryRun, { runType: "
   return "runType" in run && run.runType === "data";
 }
 
-function DataHistorySummary({ run }: { run: Extract<HistoryRun, { runType: "data" }> }) {
+function DataHistoryStats({ run }: { run: Extract<HistoryRun, { runType: "data" }> }) {
+  const { t } = useI18n();
+
+  return (
+    <Row gutter={[8, 8]} className="summary-stats">
+      <Col xs={12} md={4}>
+        <Statistic title={t("stats.tables")} value={run.summary.tables} />
+      </Col>
+      <Col xs={12} md={4}>
+        <Statistic title={t("stats.diffs")} value={run.summary.totalDiffs} />
+      </Col>
+      <Col xs={12} md={4}>
+        <Statistic title={t("data.insert")} value={run.summary.inserts} />
+      </Col>
+      <Col xs={12} md={4}>
+        <Statistic title={t("data.update")} value={run.summary.updates} />
+      </Col>
+      <Col xs={12} md={4}>
+        <Statistic title={t("data.delete")} value={run.summary.deletes} />
+      </Col>
+      <Col xs={12} md={4}>
+        <Statistic title={t("data.same")} value={run.summary.sameRows} />
+      </Col>
+    </Row>
+  );
+}
+
+function DataHistoryDetail({ run }: { run: Extract<HistoryRun, { runType: "data" }> }) {
   const { t } = useI18n();
   const columns: TableColumnsType<DataCompareRun> = [
     { title: t("data.sourceTable"), dataIndex: "tableName", width: 220 },
@@ -256,36 +338,14 @@ function DataHistorySummary({ run }: { run: Extract<HistoryRun, { runType: "data
   ];
 
   return (
-    <>
-      <Row gutter={[8, 8]} className="summary-stats">
-        <Col xs={12} md={4}>
-          <Statistic title={t("stats.tables")} value={run.summary.tables} />
-        </Col>
-        <Col xs={12} md={4}>
-          <Statistic title={t("stats.diffs")} value={run.summary.totalDiffs} />
-        </Col>
-        <Col xs={12} md={4}>
-          <Statistic title={t("data.insert")} value={run.summary.inserts} />
-        </Col>
-        <Col xs={12} md={4}>
-          <Statistic title={t("data.update")} value={run.summary.updates} />
-        </Col>
-        <Col xs={12} md={4}>
-          <Statistic title={t("data.delete")} value={run.summary.deletes} />
-        </Col>
-        <Col xs={12} md={4}>
-          <Statistic title={t("data.same")} value={run.summary.sameRows} />
-        </Col>
-      </Row>
-      <Table
-        className="data-sync-table"
-        rowKey="id"
-        size="small"
-        columns={columns}
-        dataSource={run.runs}
-        pagination={false}
-        scroll={{ x: 840 }}
-      />
-    </>
+    <Table
+      className="data-sync-table"
+      rowKey="id"
+      size="small"
+      columns={columns}
+      dataSource={run.runs}
+      pagination={false}
+      scroll={{ x: 840, y: 260 }}
+    />
   );
 }

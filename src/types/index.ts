@@ -87,6 +87,19 @@ export type HistoryFilter = {
   startTime?: string;
   endTime?: string;
   searchContent?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type HistoryPageResult = {
+  items: HistoryRun[];
+  total: number;
+};
+
+export type HistoryCounts = {
+  total: number;
+  schema: number;
+  data: number;
 };
 
 export type DataCompareRequest = {

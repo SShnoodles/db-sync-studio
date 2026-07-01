@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { CompareRun, CompareTask, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult, DataSyncTableMeta, DbConnection, HistoryFilter, HistoryRun, SchemaSyncRequest, SchemaSyncResult, TableMeta } from "../types";
+import type { CompareRun, CompareTask, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryPageResult, HistoryRun, SchemaSyncRequest, SchemaSyncResult, TableMeta } from "../types";
 
 export const dbSyncApi = {
   listConnections: () => invoke<DbConnection[]>("list_connections"),
@@ -19,7 +19,9 @@ export const dbSyncApi = {
     invoke<CompareRun>("run_schema_compare_once", { task }),
   runSchemaSync: (request: SchemaSyncRequest) =>
     invoke<SchemaSyncResult>("run_schema_sync", { request }),
-  listCompareHistory: (filter: HistoryFilter = {}) => invoke<HistoryRun[]>("list_compare_history", filter),
+  listCompareHistory: (filter: HistoryFilter = {}) => invoke<HistoryPageResult>("list_compare_history", filter),
+  getCompareHistory: (id: string) => invoke<HistoryRun>("get_compare_history", { id }),
+  getCompareHistoryCounts: () => invoke<HistoryCounts>("get_compare_history_counts"),
   deleteCompareHistory: (ids: string[]) =>
     invoke("delete_compare_history", { ids }),
   clearCompareHistory: () => invoke("clear_compare_history"),

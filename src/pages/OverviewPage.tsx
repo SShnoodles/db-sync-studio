@@ -2,23 +2,25 @@ import { Button, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd"
 import { DatabaseOutlined, DiffOutlined, HistoryOutlined, PlusOutlined, TableOutlined } from "@ant-design/icons";
 
 import { useI18n } from "../i18n";
-import type { DbConnection, HistoryRun } from "../types";
+import type { DbConnection, HistoryCounts, HistoryRun } from "../types";
 
 export function OverviewPage({
   connections,
   history,
+  historyCounts,
   onCreate,
   onConnections,
 }: {
   connections: DbConnection[];
   history: HistoryRun[];
+  historyCounts: HistoryCounts;
   onCreate: () => void;
   onConnections: () => void;
 }) {
   const { t } = useI18n();
-  const schemaHistoryCount = history.filter((item) => !("runType" in item)).length;
-  const dataHistoryCount = history.filter((item) => "runType" in item && item.runType === "data").length;
-  const historyCount = history.length;
+  const schemaHistoryCount = historyCounts.schema;
+  const dataHistoryCount = historyCounts.data;
+  const historyCount = historyCounts.total || history.length;
 
   return (
     <>
