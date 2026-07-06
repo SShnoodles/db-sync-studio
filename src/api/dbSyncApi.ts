@@ -21,6 +21,7 @@ export const dbSyncApi = {
     invoke<SchemaSyncResult>("run_schema_sync", { request }),
   listCompareHistory: (filter: HistoryFilter = {}) => invoke<HistoryPageResult>("list_compare_history", filter),
   getCompareHistory: (id: string) => invoke<HistoryRun>("get_compare_history", { id }),
+  getCompareHistorySql: (id: string) => invoke<string>("get_compare_history_sql", { id }),
   getCompareHistoryCounts: () => invoke<HistoryCounts>("get_compare_history_counts"),
   deleteCompareHistory: (ids: string[]) =>
     invoke("delete_compare_history", { ids }),

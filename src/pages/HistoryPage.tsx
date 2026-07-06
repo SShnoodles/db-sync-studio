@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Col, DatePicker, Descriptions, Empty, Input, Pagination, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 
-import { DiffTable, SqlPreview, SummaryStats } from "../components/schemaCompare";
+import { DiffTable, SummaryStats } from "../components/schemaCompare";
 import { useI18n } from "../i18n";
 import type { DataCompareRun, HistoryFilter, HistoryRun } from "../types";
 import { formatDate } from "../utils/format";
@@ -18,6 +18,7 @@ export function HistoryPage({
   pageSize,
   onCopySql,
   onLoadDetail,
+  onLoadSql,
   onDelete,
   onClear,
   onSearch,
@@ -29,6 +30,7 @@ export function HistoryPage({
   pageSize: number;
   onCopySql: (sql: string) => void;
   onLoadDetail: (id: string) => Promise<HistoryRun>;
+  onLoadSql: (id: string) => Promise<string>;
   onDelete: (ids: string[]) => void;
   onClear: () => void;
   onSearch: (filter: HistoryFilter) => void;
@@ -104,8 +106,12 @@ export function HistoryPage({
   };
 
   const copyHistorySql = async (run: HistoryRun) => {
-    const detail = details[run.id] || await loadDetail(run.id);
-    onCopySql(detail.syncSql);
+    setLoadingIds((current) => Array.from(new Set([...current, run.id])));
+    try {
+      onCopySql(await onLoadSql(run.id));
+    } finally {
+      setLoadingIds((current) => current.filter((item) => item !== run.id));
+    }
   };
 
   const changePage = (nextPage: number) => {
@@ -262,9 +268,6 @@ export function HistoryPage({
                   ) : (
                     <DiffTable diffs={(details[run.id] as Exclude<HistoryRun, { runType: "data" }>).diffs} compact />
                   )
-                )}
-                {expandedIds.includes(run.id) && details[run.id] && (
-                  <SqlPreview sql={details[run.id].syncSql} />
                 )}
               </Card>
             )) : (

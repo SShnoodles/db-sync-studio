@@ -1,5 +1,6 @@
 use crate::db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection};
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::Path, sync::Mutex};
 
@@ -491,6 +492,24 @@ impl LocalStore {
             .connection
             .lock()
             .map_err(|_| "Storage lock failed".to_string())?;
+        let (sync_type, json): (String, String) = connection
+            .query_row(
+                "SELECT sync_type, result_json FROM compare_history WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| "Comparison history was not found".to_string())?;
+        if sync_type == "data" {
+            return slim_data_history_value(&json);
+        }
+        serde_json::from_str(&json).map_err(|error| error.to_string())
+    }
+
+    pub fn get_history_sql(&self, id: &str) -> Result<String, String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
         let json: String = connection
             .query_row(
                 "SELECT result_json FROM compare_history WHERE id = ?1",
@@ -498,7 +517,15 @@ impl LocalStore {
                 |row| row.get(0),
             )
             .map_err(|_| "Comparison history was not found".to_string())?;
-        serde_json::from_str(&json).map_err(|error| error.to_string())
+        if let Some(sql) = extract_json_string(&json, "syncSql") {
+            return Ok(sql);
+        }
+        let value: Value = serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        Ok(value
+            .get("syncSql")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string())
     }
 
     pub fn delete_history(&self, ids: &[String]) -> Result<(), String> {
@@ -586,6 +613,54 @@ fn history_summary_value(
     }
 
     Ok(Value::Object(item))
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SlimDataHistoryRun {
+    run_type: String,
+    id: String,
+    #[serde(default)]
+    db_type: Option<String>,
+    title: String,
+    source_name: String,
+    target_name: String,
+    summary: Value,
+    #[serde(default)]
+    runs: Vec<SlimDataCompareRun>,
+    created_at: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SlimDataCompareRun {
+    id: String,
+    #[serde(default)]
+    db_type: Option<String>,
+    table_name: String,
+    source_name: String,
+    target_name: String,
+    #[serde(default)]
+    key_columns: Vec<String>,
+    summary: Value,
+    created_at: String,
+}
+
+fn slim_data_history_value(json: &str) -> Result<Value, String> {
+    let run: SlimDataHistoryRun = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let mut value = serde_json::to_value(run).map_err(|error| error.to_string())?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("syncSql".into(), Value::String(String::new()));
+        if let Some(runs) = object.get_mut("runs").and_then(Value::as_array_mut) {
+            for item in runs {
+                if let Some(run_object) = item.as_object_mut() {
+                    run_object.insert("diffs".into(), Value::Array(Vec::new()));
+                    run_object.insert("syncSql".into(), Value::String(String::new()));
+                }
+            }
+        }
+    }
+    Ok(value)
 }
 
 fn extract_json_string(json: &str, key: &str) -> Option<String> {

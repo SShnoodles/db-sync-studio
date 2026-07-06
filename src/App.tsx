@@ -131,6 +131,7 @@ function App() {
   };
 
   const loadHistoryDetail = async (id: string) => dbSyncApi.getCompareHistory(id);
+  const loadHistorySql = async (id: string) => dbSyncApi.getCompareHistorySql(id);
 
   useEffect(() => {
     void loadConnections();
@@ -553,6 +554,7 @@ function App() {
                   pageSize={historyPageSize}
                   onCopySql={copySql}
                   onLoadDetail={loadHistoryDetail}
+                  onLoadSql={loadHistorySql}
                   onDelete={deleteHistory}
                   onClear={clearHistory}
                   onSearch={searchHistory}

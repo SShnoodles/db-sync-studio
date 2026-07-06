@@ -204,6 +204,11 @@ pub fn get_compare_history(id: String, store: State<'_, LocalStore>) -> Result<V
 }
 
 #[tauri::command]
+pub fn get_compare_history_sql(id: String, store: State<'_, LocalStore>) -> Result<String, String> {
+    store.get_history_sql(&id)
+}
+
+#[tauri::command]
 pub fn get_compare_history_counts(store: State<'_, LocalStore>) -> Result<Value, String> {
     store.history_counts()
 }
