@@ -84,6 +84,7 @@ export function DataSyncPage({
   }, [tableOptions]);
 
   useEffect(() => {
+    setSelectedTables([]);
     setOperationSelection(
       Object.fromEntries(
         currentRuns.map((run) => [run.tableName, emptyOperationSelection]),
@@ -108,28 +109,35 @@ export function DataSyncPage({
       };
     });
   }, [currentRuns, runByTable, tableMetaByName, tableOptions]);
+  const resultRows = useMemo<DataSyncRow[]>(
+    () =>
+      currentRuns.map((run) => {
+        const meta = tableMetaByName.get(run.tableName);
+        return {
+          tableName: run.tableName,
+          sourceExists: meta?.sourceExists ?? true,
+          targetExists: meta?.targetExists ?? true,
+          run,
+        };
+      }),
+    [currentRuns, tableMetaByName],
+  );
 
   const selectedSql = useMemo(() => {
-    const selected = new Set(selectedTables.map(String));
     return dataSqlWithComments(
-      currentRuns
-        .filter((run) => selected.has(run.tableName))
-        .flatMap((run) => {
-          const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
-          return run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql);
-        }),
+      currentRuns.flatMap((run) => {
+        const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+        return run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql);
+      }),
     );
-  }, [currentRuns, operationSelection, selectedTables]);
+  }, [currentRuns, operationSelection]);
 
   const selectedSqlCount = useMemo(() => {
-    const selected = new Set(selectedTables.map(String));
-    return currentRuns
-      .filter((run) => selected.has(run.tableName))
-      .reduce((count, run) => {
-        const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
-        return count + run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql).length;
-      }, 0);
-  }, [currentRuns, operationSelection, selectedTables]);
+    return currentRuns.reduce((count, run) => {
+      const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+      return count + run.diffs.filter((diff) => selectedOperations[diff.diffType] && diff.syncSql).length;
+    }, 0);
+  }, [currentRuns, operationSelection]);
 
   const progressPercent = progress && progress.total > 0
     ? Math.round((progress.completed / progress.total) * 100)
@@ -143,11 +151,11 @@ export function DataSyncPage({
   }, [progress]);
 
   const selectedOperationSummary = useMemo(() => {
-    const selected = new Set(selectedTables.map(String));
     return currentRuns.reduce(
       (summary, run) => {
-        if (!selected.has(run.tableName)) return summary;
         const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+        const hasSelectedOperation = Object.values(selectedOperations).some(Boolean);
+        if (!hasSelectedOperation) return summary;
         return {
           insert: summary.insert + (selectedOperations.insert ? run.summary.inserts : 0),
           update: summary.update + (selectedOperations.update ? run.summary.updates : 0),
@@ -157,7 +165,41 @@ export function DataSyncPage({
       },
       { insert: 0, update: 0, delete: 0, same: 0 },
     );
-  }, [currentRuns, operationSelection, selectedTables]);
+  }, [currentRuns, operationSelection]);
+
+  const selectedResultTableCount = useMemo(
+    () =>
+      currentRuns.filter((run) =>
+        Object.values(operationSelection[run.tableName] || emptyOperationSelection).some(Boolean),
+      ).length,
+    [currentRuns, operationSelection],
+  );
+
+  const fullySelectedResultTables = useMemo(
+    () =>
+      currentRuns
+        .filter((run) => {
+          const selectedOperations = operationSelection[run.tableName] || emptyOperationSelection;
+          return selectedOperations.insert && selectedOperations.update && selectedOperations.delete;
+        })
+        .map((run) => run.tableName),
+    [currentRuns, operationSelection],
+  );
+
+  const toggleResultRows = (tableNames: React.Key[]) => {
+    const selected = new Set(tableNames.map(String));
+    setOperationSelection((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        currentRuns.map((run) => [
+          run.tableName,
+          selected.has(run.tableName)
+            ? { insert: true, update: true, delete: true }
+            : { insert: false, update: false, delete: false },
+        ]),
+      ),
+    }));
+  };
 
   const toggleOperation = (tableName: string, operation: DataOperation, checked: boolean) => {
     setOperationSelection((current) => ({
@@ -352,7 +394,7 @@ export function DataSyncPage({
           <div className="data-sync-selected-summary">
             <div className="data-sync-selected-stat data-sync-selected-tables-stat">
               <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>
-              <span className="data-sync-selected-stat-value">{selectedTables.length}</span>
+              <span className="data-sync-selected-stat-value">{selectedResultTableCount}</span>
             </div>
             <div className="data-sync-selected-stat data-sync-selected-diffs-stat">
               <span className="data-sync-selected-stat-title">{t("stats.diffs")}</span>
@@ -380,12 +422,12 @@ export function DataSyncPage({
             rowKey="tableName"
             size="small"
             columns={columns}
-            dataSource={rows}
+            dataSource={resultRows}
             pagination={false}
-            scroll={{ y: "clamp(260px, 34vh, 460px)", x: 970 }}
+            scroll={{ y: 304, x: 970 }}
             rowSelection={{
-              selectedRowKeys: selectedTables,
-              onChange: setSelectedTables,
+              selectedRowKeys: fullySelectedResultTables,
+              onChange: toggleResultRows,
               getCheckboxProps: (row) => ({
                 disabled: !row.sourceExists || !row.targetExists,
               }),

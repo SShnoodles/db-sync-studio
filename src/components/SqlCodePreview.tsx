@@ -1,26 +1,51 @@
+import { useEffect, useMemo, useState } from "react";
+import { Pagination } from "antd";
 import type { ReactNode } from "react";
 
 const sqlTokenPattern =
   /(--.*$)|('[^']*(?:''[^']*)*')|(`[^`]+`)|\b(SELECT|INSERT|INTO|VALUES|UPDATE|SET|DELETE|FROM|WHERE|AND|OR|NULL|IS|NOT|CREATE|ALTER|TABLE|ADD|DROP|MODIFY|CHANGE|PRIMARY|KEY|DEFAULT|CURRENT_TIMESTAMP|ON|DUPLICATE|ORDER|BY|GROUP|LIMIT|JOIN|LEFT|RIGHT|INNER|OUTER|AS|DISTINCT|INDEX|CONSTRAINT|UNIQUE|REFERENCES|AUTO_INCREMENT|COMMENT|COLUMN|RENAME|TO)\b|(\b\d+(?:\.\d+)?\b)/gi;
 
-export function SqlCodePreview({ sql, maxLines = 500 }: { sql: string; maxLines?: number }) {
-  const lines = sql.split("\n");
-  const visibleLines = lines.length > maxLines
-    ? [
-        ...lines.slice(0, maxLines),
-        `-- Preview truncated: ${lines.length - maxLines} more line(s). Use Copy SQL to get the full content.`,
-      ]
-    : lines;
+export function SqlCodePreview({ sql, pageSize = 100 }: { sql: string; pageSize?: number }) {
+  const [page, setPage] = useState(1);
+  const lines = useMemo(() => sql.split("\n"), [sql]);
+  const total = lines.length;
+  const start = (page - 1) * pageSize;
+  const visibleLines = useMemo(
+    () => lines.slice(start, start + pageSize),
+    [lines, pageSize, start],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [sql]);
 
   return (
-    <pre>
-      {visibleLines.map((line, index) => (
-        <span className="sql-line" key={`${index}-${line}`}>
-          <span className="sql-line-number">{index + 1}</span>
-          <span className="sql-line-code">{line ? highlightSql(line) : " "}</span>
-        </span>
-      ))}
-    </pre>
+    <div className="sql-code-preview">
+      <pre>
+        {visibleLines.map((line, index) => {
+          const lineNumber = start + index + 1;
+          return (
+            <span className="sql-line" key={`${lineNumber}-${line}`}>
+              <span className="sql-line-number">{lineNumber}</span>
+              <span className="sql-line-code">{line ? highlightSql(line) : " "}</span>
+            </span>
+          );
+        })}
+      </pre>
+      {total > pageSize && (
+        <div className="sql-code-pagination">
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            size="small"
+            showSizeChanger={false}
+            showTotal={(total) => `${total} lines`}
+            onChange={setPage}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -425,6 +425,11 @@ body {
   line-height: 1.45;
   white-space: pre-wrap;
 }
+.sql-code-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
 .sql-line {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);

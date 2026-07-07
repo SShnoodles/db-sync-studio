@@ -114,7 +114,9 @@ pub fn run_schema_compare(
         sync_sql,
         created_at: Utc::now().to_rfc3339(),
     };
-    store.save_history(&run)?;
+    if has_schema_sync_sql(&run.diffs) {
+        store.save_history(&run)?;
+    }
     Ok(run)
 }
 
@@ -147,7 +149,9 @@ pub fn run_schema_compare_once(
         sync_sql,
         created_at,
     };
-    store.save_history(&run)?;
+    if has_schema_sync_sql(&run.diffs) {
+        store.save_history(&run)?;
+    }
     Ok(run)
 }
 
@@ -314,7 +318,11 @@ fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {
 fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
     let mut object_keys = diffs
         .iter()
-        .filter(|diff| diff.sync_sql.is_some())
+        .filter(|diff| {
+            diff.sync_sql
+                .as_deref()
+                .is_some_and(|sql| !sql.trim().is_empty())
+        })
         .map(|diff| (diff.object_type.clone(), diff.table_name.clone()))
         .collect::<Vec<_>>();
     object_keys.sort_by(|left, right| {
@@ -344,6 +352,7 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
                             && diff.diff_type == diff_type
                     })
                     .filter_map(|diff| diff.sync_sql.as_deref())
+                    .filter(|sql| !sql.trim().is_empty())
                     .collect::<Vec<_>>();
                 (!statements.is_empty()).then(|| {
                     format!(
@@ -366,6 +375,14 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
         .join("\n\n")
 }
 
+fn has_schema_sync_sql(diffs: &[db::SchemaDiff]) -> bool {
+    diffs.iter().any(|diff| {
+        diff.sync_sql
+            .as_deref()
+            .is_some_and(|sql| !sql.trim().is_empty())
+    })
+}
+
 fn schema_object_order(object_type: &str) -> u8 {
     match object_type {
         "type" => 0,
@@ -377,7 +394,11 @@ fn schema_object_order(object_type: &str) -> u8 {
 fn data_sync_sql(diffs: &[db::DataDiff]) -> String {
     let mut table_names = diffs
         .iter()
-        .filter(|diff| diff.sync_sql.is_some())
+        .filter(|diff| {
+            diff.sync_sql
+                .as_deref()
+                .is_some_and(|sql| !sql.trim().is_empty())
+        })
         .map(|diff| diff.table_name.clone())
         .collect::<Vec<_>>();
     table_names.sort();
@@ -397,6 +418,7 @@ fn data_sync_sql(diffs: &[db::DataDiff]) -> String {
                     .iter()
                     .filter(|diff| diff.table_name == table_name && diff.diff_type == diff_type)
                     .filter_map(|diff| diff.sync_sql.as_deref())
+                    .filter(|sql| !sql.trim().is_empty())
                     .collect::<Vec<_>>();
                 (!statements.is_empty()).then(|| {
                     format!(

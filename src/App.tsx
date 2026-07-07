@@ -294,7 +294,8 @@ function App() {
       const errors = results.flatMap((result) => ("error" in result ? [`${result.tableName}: ${result.error}`] : []));
       setCurrentDataRuns(runs);
       const diffCount = runs.reduce((sum, run) => sum + run.summary.totalDiffs, 0);
-      if (runs.length > 0) {
+      const hasGeneratedSql = runs.some((run) => run.syncSql.trim());
+      if (hasGeneratedSql) {
         await dbSyncApi.saveDataCompareHistory(buildDataCompareHistory(runs));
         await loadHistory(historyFilter, historyPage);
         await loadHistoryCounts();
