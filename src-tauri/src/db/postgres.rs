@@ -245,6 +245,30 @@ pub fn execute_schema_statements(
     Ok(())
 }
 
+pub fn execute_data_statements(
+    connection: &DbConnection,
+    statements: &[String],
+) -> Result<(), String> {
+    let mut client = client(connection)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| format!("Unable to start PostgreSQL data transaction: {error}"))?;
+    for statement in statements {
+        if let Err(error) = transaction.batch_execute(statement) {
+            let rollback_error = transaction.rollback().err();
+            let rollback_detail = rollback_error
+                .map(|error| format!(" Rollback also failed: {error}."))
+                .unwrap_or_default();
+            return Err(format!(
+                "Unable to execute PostgreSQL data SQL: {error}.{rollback_detail}\n{statement}"
+            ));
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to commit PostgreSQL data transaction: {error}"))
+}
+
 fn row_to_map(row: Row) -> Result<BTreeMap<String, JsonValue>, String> {
     let json: String = row.get(0);
     let value: JsonValue = serde_json::from_str(&json).map_err(|error| error.to_string())?;

@@ -112,7 +112,7 @@ pub fn execute_schema_sql(
     connection: &DbConnection,
     sql: &str,
 ) -> Result<SchemaSyncResult, String> {
-    let executed = execute_sql(connection, sql)?;
+    let executed = execute_sql(connection, sql, false)?;
     Ok(SchemaSyncResult {
         executed,
         skipped: 0,
@@ -120,7 +120,7 @@ pub fn execute_schema_sql(
 }
 
 pub fn execute_data_sql(connection: &DbConnection, sql: &str) -> Result<DataSyncResult, String> {
-    let executed = execute_sql(connection, sql)?;
+    let executed = execute_sql(connection, sql, true)?;
     Ok(DataSyncResult {
         executed,
         skipped: 0,
@@ -349,7 +349,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     statements
 }
 
-fn execute_sql(connection: &DbConnection, sql: &str) -> Result<usize, String> {
+fn execute_sql(connection: &DbConnection, sql: &str, transactional: bool) -> Result<usize, String> {
     let statements = split_sql_statements(sql)
         .into_iter()
         .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
@@ -358,10 +358,13 @@ fn execute_sql(connection: &DbConnection, sql: &str) -> Result<usize, String> {
         return Ok(0);
     }
 
-    match connection.db_type.as_str() {
-        "mysql" => mysql::execute_schema_statements(connection, &statements)?,
-        "postgresql" => postgres::execute_schema_statements(connection, &statements)?,
-        "sqlite" => sqlite::execute_schema_statements(connection, &statements)?,
+    match (connection.db_type.as_str(), transactional) {
+        ("mysql", true) => mysql::execute_data_statements(connection, &statements)?,
+        ("postgresql", true) => postgres::execute_data_statements(connection, &statements)?,
+        ("sqlite", true) => sqlite::execute_data_statements(connection, &statements)?,
+        ("mysql", false) => mysql::execute_schema_statements(connection, &statements)?,
+        ("postgresql", false) => postgres::execute_schema_statements(connection, &statements)?,
+        ("sqlite", false) => sqlite::execute_schema_statements(connection, &statements)?,
         _ => return Err("Unsupported database type".into()),
     }
 

@@ -1,4 +1,4 @@
-use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, Value};
+use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, TxOpts, Value};
 use serde_json::{Number, Value as JsonValue};
 use std::collections::{BTreeMap, HashMap};
 
@@ -193,6 +193,45 @@ pub fn execute_schema_statements(
             .map_err(|error| format!("Unable to execute MySQL schema SQL: {error}\n{statement}"))?;
     }
     Ok(())
+}
+
+pub fn execute_data_statements(
+    connection: &DbConnection,
+    statements: &[String],
+) -> Result<(), String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let mut transaction = conn
+        .start_transaction(TxOpts::default())
+        .map_err(|error| format!("Unable to start MySQL data transaction: {error}"))?;
+    for statement in statements {
+        if let Err(error) = transaction.query_drop(statement) {
+            let rollback_error = transaction.rollback().err();
+            return Err(format_transaction_error(
+                "MySQL",
+                error,
+                rollback_error,
+                statement,
+            ));
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to commit MySQL data transaction: {error}"))
+}
+
+fn format_transaction_error(
+    database: &str,
+    error: impl std::fmt::Display,
+    rollback_error: Option<impl std::fmt::Display>,
+    statement: &str,
+) -> String {
+    let rollback_detail = rollback_error
+        .map(|error| format!(" Rollback also failed: {error}."))
+        .unwrap_or_default();
+    format!("Unable to execute {database} data SQL: {error}.{rollback_detail}\n{statement}")
 }
 
 fn escape_identifier(value: &str) -> String {

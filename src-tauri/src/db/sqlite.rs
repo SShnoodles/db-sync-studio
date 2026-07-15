@@ -170,6 +170,27 @@ pub fn execute_schema_statements(
     Ok(())
 }
 
+pub fn execute_data_statements(config: &DbConnection, statements: &[String]) -> Result<(), String> {
+    let mut connection = connection(config)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to start SQLite data transaction: {error}"))?;
+    for statement in statements {
+        if let Err(error) = transaction.execute_batch(statement) {
+            let rollback_error = transaction.rollback().err();
+            let rollback_detail = rollback_error
+                .map(|error| format!(" Rollback also failed: {error}."))
+                .unwrap_or_default();
+            return Err(format!(
+                "Unable to execute SQLite data SQL: {error}.{rollback_detail}\n{statement}"
+            ));
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to commit SQLite data transaction: {error}"))
+}
+
 pub fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
@@ -192,4 +213,55 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02X}"))
         .collect::<Vec<_>>()
         .join("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_statements_roll_back_the_entire_batch_on_failure() {
+        let path = std::env::temp_dir().join(format!(
+            "db-sync-studio-transaction-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        Connection::open(&path)
+            .unwrap()
+            .execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)", [])
+            .unwrap();
+        let config = sqlite_test_connection(path.to_string_lossy().into_owned());
+
+        let result = execute_data_statements(
+            &config,
+            &[
+                "INSERT INTO items (id, name) VALUES (1, 'first');".into(),
+                "INSERT INTO missing_table (id) VALUES (2);".into(),
+            ],
+        );
+
+        assert!(result.is_err());
+        let row_count: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(row_count, 0);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn sqlite_test_connection(database: String) -> DbConnection {
+        DbConnection {
+            id: "test".into(),
+            name: "test".into(),
+            db_type: "sqlite".into(),
+            host: None,
+            port: None,
+            database,
+            username: None,
+            password: None,
+            ssl_mode: None,
+            environment: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
 }
