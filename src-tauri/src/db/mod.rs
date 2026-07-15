@@ -98,11 +98,12 @@ pub fn fetch_rows(
     table: &str,
     order_columns: &[String],
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<BTreeMap<String, Value>>, String> {
     match connection.db_type.as_str() {
-        "mysql" => mysql::fetch_rows(connection, table, order_columns, limit),
-        "postgresql" => postgres::fetch_rows(connection, table, order_columns, limit),
-        "sqlite" => sqlite::fetch_rows(connection, table, order_columns, limit),
+        "mysql" => mysql::fetch_rows(connection, table, order_columns, limit, offset),
+        "postgresql" => postgres::fetch_rows(connection, table, order_columns, limit, offset),
+        "sqlite" => sqlite::fetch_rows(connection, table, order_columns, limit, offset),
         _ => Err("Unsupported database type".into()),
     }
 }
@@ -497,6 +498,12 @@ pub struct DataCompareSummary {
     pub deletes: usize,
     pub same_rows: usize,
     pub compared_rows: usize,
+    #[serde(default)]
+    pub source_rows: usize,
+    #[serde(default)]
+    pub target_rows: usize,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

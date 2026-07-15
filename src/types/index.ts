@@ -150,6 +150,9 @@ export type DataCompareSummary = {
   deletes: number;
   sameRows: number;
   comparedRows: number;
+  sourceRows?: number;
+  targetRows?: number;
+  truncated?: boolean;
 };
 
 export type DataCompareRun = {

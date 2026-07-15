@@ -6,7 +6,8 @@ use crate::db::{
     self, ChangedColumn, DataCompareRequest, DataCompareSummary, DataDiff, DbConnection,
 };
 
-const ROW_LIMIT: usize = 5000;
+const ROW_BATCH_SIZE: usize = 2_000;
+const MAX_COMPARE_ROWS: usize = 100_000;
 
 pub fn compare_data(
     source: &DbConnection,
@@ -35,8 +36,11 @@ pub fn compare_data(
         .iter()
         .map(|column| column.name.clone())
         .collect::<Vec<_>>();
-    let source_rows = db::fetch_rows(source, &request.table_name, &key_columns, ROW_LIMIT)?;
-    let target_rows = db::fetch_rows(target, &request.table_name, &key_columns, ROW_LIMIT)?;
+    let (source_rows, source_truncated) =
+        fetch_rows_in_batches(source, &request.table_name, &key_columns)?;
+    let (target_rows, target_truncated) =
+        fetch_rows_in_batches(target, &request.table_name, &key_columns)?;
+    let truncated = source_truncated || target_truncated;
     let source_map = rows_by_key(&source_rows, &key_columns)?;
     let target_map = rows_by_key(&target_rows, &key_columns)?;
     let mut diffs = Vec::new();
@@ -85,6 +89,11 @@ pub fn compare_data(
         }
     }
 
+    if truncated {
+        for diff in &mut diffs {
+            diff.sync_sql = None;
+        }
+    }
     let sync_sql = diffs
         .iter()
         .filter_map(|diff| diff.sync_sql.as_deref())
@@ -106,9 +115,43 @@ pub fn compare_data(
             .count(),
         same_rows,
         compared_rows: source_rows.len().max(target_rows.len()),
+        source_rows: source_rows.len(),
+        target_rows: target_rows.len(),
+        truncated,
     };
 
     Ok((key_columns, summary, diffs, sync_sql))
+}
+
+fn fetch_rows_in_batches(
+    connection: &DbConnection,
+    table: &str,
+    key_columns: &[String],
+) -> Result<(Vec<BTreeMap<String, Value>>, bool), String> {
+    let mut rows = Vec::new();
+    let mut offset = 0;
+
+    loop {
+        let remaining = MAX_COMPARE_ROWS.saturating_sub(rows.len());
+        let fetch_limit = remaining.min(ROW_BATCH_SIZE) + usize::from(remaining <= ROW_BATCH_SIZE);
+        let mut batch = db::fetch_rows(connection, table, key_columns, fetch_limit, offset)?;
+
+        if batch.len() > remaining {
+            batch.truncate(remaining);
+            rows.extend(batch);
+            return Ok((rows, true));
+        }
+
+        let batch_len = batch.len();
+        rows.extend(batch);
+        if batch_len < fetch_limit {
+            return Ok((rows, false));
+        }
+        if rows.len() >= MAX_COMPARE_ROWS {
+            return Ok((rows, true));
+        }
+        offset += batch_len;
+    }
 }
 
 fn rows_by_key(

@@ -207,6 +207,7 @@ pub fn fetch_rows(
     table: &str,
     order_columns: &[String],
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<BTreeMap<String, JsonValue>>, String> {
     let mut client = client(connection)?;
     let order_by = if order_columns.is_empty() {
@@ -222,7 +223,7 @@ pub fn fetch_rows(
         )
     };
     let sql = format!(
-        "SELECT row_to_json(t)::text FROM (SELECT * FROM {}{order_by} LIMIT {limit}) t",
+        "SELECT row_to_json(t)::text FROM (SELECT * FROM {}{order_by} LIMIT {limit} OFFSET {offset}) t",
         quote_identifier(table)
     );
     let rows = client

@@ -117,6 +117,7 @@ pub fn fetch_rows(
     table: &str,
     order_columns: &[String],
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<BTreeMap<String, JsonValue>>, String> {
     let connection = connection(config)?;
     let order_by = if order_columns.is_empty() {
@@ -132,7 +133,7 @@ pub fn fetch_rows(
         )
     };
     let sql = format!(
-        "SELECT * FROM {}{order_by} LIMIT {limit}",
+        "SELECT * FROM {}{order_by} LIMIT {limit} OFFSET {offset}",
         quote_identifier(table)
     );
     let mut statement = connection

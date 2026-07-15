@@ -139,6 +139,8 @@ const messages = {
 
     "data.title": "Data Sync",
     "data.description": "Compare table rows from Source to Target and generate INSERT / UPDATE / DELETE preview SQL.",
+    "data.truncatedTitle": "Comparison stopped at the safety limit",
+    "data.truncatedDescription": "At least one table has more than 100,000 rows. The partial result is for review only, and synchronization SQL has been disabled.",
     "data.compareConfig": "Compare configuration",
     "data.needTwoConnectionsDesc": "Data Sync needs one source connection and one target connection.",
     "data.table": "Table",
@@ -337,6 +339,8 @@ const messages = {
 
     "data.title": "数据同步",
     "data.description": "按 Source -> Target 比较表数据，并生成 INSERT / UPDATE / DELETE 预览 SQL。",
+    "data.truncatedTitle": "比较已到达安全上限",
+    "data.truncatedDescription": "至少一个表超过 100,000 行。当前结果仅供查看，已禁止生成和执行同步 SQL。",
     "data.compareConfig": "对比配置",
     "data.needTwoConnectionsDesc": "数据同步需要一个源库连接和一个目标库连接。",
     "data.table": "数据表",

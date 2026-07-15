@@ -391,6 +391,15 @@ export function DataSyncPage({
           className="compare-result-card"
           title={t("data.latestResult")}
         >
+          {currentRuns.some((run) => run.summary.truncated) && (
+            <Alert
+              className="security-alert"
+              type="warning"
+              showIcon
+              message={t("data.truncatedTitle")}
+              description={t("data.truncatedDescription")}
+            />
+          )}
           <div className="data-sync-selected-summary">
             <div className="data-sync-selected-stat data-sync-selected-tables-stat">
               <span className="data-sync-selected-stat-title">{t("data.selectedTablesTitle")}</span>

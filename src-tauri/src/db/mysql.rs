@@ -132,6 +132,7 @@ pub fn fetch_rows(
     table: &str,
     order_columns: &[String],
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<BTreeMap<String, JsonValue>>, String> {
     let columns = list_columns(connection, table)?;
     let column_types = columns
@@ -167,7 +168,9 @@ pub fn fetch_rows(
                 .join(", ")
         )
     };
-    let sql = format!("SELECT {select_list} FROM `{escaped_table}`{order_by} LIMIT {limit}");
+    let sql = format!(
+        "SELECT {select_list} FROM `{escaped_table}`{order_by} LIMIT {limit} OFFSET {offset}"
+    );
     let rows: Vec<Row> = conn
         .query(sql)
         .map_err(|error| format!("Unable to fetch rows from {table}: {error}"))?;
