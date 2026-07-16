@@ -84,6 +84,15 @@ pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<Strin
     }
 }
 
+pub fn show_create_view(connection: &DbConnection, view: &str) -> Result<String, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::show_create_view(connection, view),
+        "postgresql" => postgres::show_create_view(connection, view),
+        "sqlite" => sqlite::show_create_view(connection, view),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
 pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String>, String> {
     match connection.db_type.as_str() {
         "mysql" => mysql::primary_keys(connection, table),
@@ -158,6 +167,8 @@ pub struct DataSyncTableMeta {
     pub name: String,
     pub source_exists: bool,
     pub target_exists: bool,
+    pub source_object_type: Option<String>,
+    pub target_object_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

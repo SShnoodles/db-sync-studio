@@ -111,6 +111,28 @@ pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<Strin
         .ok_or_else(|| format!("CREATE TABLE statement was not found for {table}"))
 }
 
+pub fn show_create_view(connection: &DbConnection, view: &str) -> Result<String, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let definition: Option<String> = conn
+        .exec_first(
+            "SELECT view_definition FROM information_schema.views WHERE table_schema = DATABASE() AND table_name = ?",
+            (view,),
+        )
+        .map_err(|error| format!("Unable to read CREATE VIEW for {view}: {error}"))?;
+    definition
+        .map(|definition| {
+            format!(
+                "CREATE OR REPLACE VIEW `{}` AS {};",
+                escape_identifier(view),
+                definition.trim().trim_end_matches(';')
+            )
+        })
+        .ok_or_else(|| format!("View definition was not found for {view}"))
+}
+
 pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String>, String> {
     let pool = pool(connection)?;
     let mut conn = pool

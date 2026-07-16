@@ -22,30 +22,44 @@ pub fn compare_schema(
             source_table_map.get(&table_name),
             target_table_map.get(&table_name),
         ) {
-            (Some(_), None) => diffs.push(SchemaDiff {
-                object_type: "table".into(),
+            (Some(source_table), None) => diffs.push(SchemaDiff {
+                object_type: schema_object_type(source_table).into(),
                 table_name: table_name.clone(),
                 column_name: None,
                 diff_type: "added".into(),
-                source_value: Some("exists".into()),
+                source_value: Some(source_table.table_type.clone()),
                 target_value: None,
-                sync_sql: Some(db::show_create_table(source, &table_name)?),
+                sync_sql: Some(show_create_object(source, source_table)?),
                 risk_level: "medium".into(),
             }),
-            (None, Some(_)) => diffs.push(SchemaDiff {
-                object_type: "table".into(),
+            (None, Some(target_table)) => diffs.push(SchemaDiff {
+                object_type: schema_object_type(target_table).into(),
                 table_name: table_name.clone(),
                 column_name: None,
                 diff_type: "removed".into(),
                 source_value: None,
-                target_value: Some("exists".into()),
-                sync_sql: Some(format!(
-                    "DROP TABLE {};",
-                    db::quote_identifier(target, &table_name)
-                )),
+                target_value: Some(target_table.table_type.clone()),
+                sync_sql: Some(drop_object_sql(target, target_table)),
                 risk_level: "high".into(),
             }),
             (Some(source_table), Some(target_table)) => {
+                if source_table.table_type != target_table.table_type {
+                    diffs.push(SchemaDiff {
+                        object_type: schema_object_type(source_table).into(),
+                        table_name: table_name.clone(),
+                        column_name: None,
+                        diff_type: "modified".into(),
+                        source_value: Some(source_table.table_type.clone()),
+                        target_value: Some(target_table.table_type.clone()),
+                        sync_sql: None,
+                        risk_level: "high".into(),
+                    });
+                    continue;
+                }
+                if is_view(source_table) {
+                    compare_view(source, target, source_table, &mut diffs)?;
+                    continue;
+                }
                 compare_table_comment(target, source_table, target_table, &mut diffs);
                 let source_columns = column_map(db::list_columns(source, &table_name)?);
                 let target_columns = column_map(db::list_columns(target, &table_name)?);
@@ -65,6 +79,66 @@ pub fn compare_schema(
     }
 
     Ok(diffs)
+}
+
+fn schema_object_type(table: &TableMeta) -> &'static str {
+    if is_view(table) {
+        "view"
+    } else {
+        "table"
+    }
+}
+
+fn is_view(table: &TableMeta) -> bool {
+    table.table_type.eq_ignore_ascii_case("VIEW")
+}
+
+fn show_create_object(connection: &DbConnection, object: &TableMeta) -> Result<String, String> {
+    if is_view(object) {
+        db::show_create_view(connection, &object.name)
+    } else {
+        db::show_create_table(connection, &object.name)
+    }
+}
+
+fn drop_object_sql(connection: &DbConnection, object: &TableMeta) -> String {
+    format!(
+        "DROP {} {};",
+        if is_view(object) { "VIEW" } else { "TABLE" },
+        db::quote_identifier(connection, &object.name)
+    )
+}
+
+fn compare_view(
+    source: &DbConnection,
+    target: &DbConnection,
+    source_view: &TableMeta,
+    diffs: &mut Vec<SchemaDiff>,
+) -> Result<(), String> {
+    let source_definition = db::show_create_view(source, &source_view.name)?;
+    let target_definition = db::show_create_view(target, &source_view.name)?;
+    if normalize_ddl(&source_definition) == normalize_ddl(&target_definition) {
+        return Ok(());
+    }
+    diffs.push(SchemaDiff {
+        object_type: "view".into(),
+        table_name: source_view.name.clone(),
+        column_name: None,
+        diff_type: "modified".into(),
+        source_value: Some(source_definition.clone()),
+        target_value: Some(target_definition),
+        sync_sql: (target.db_type != "sqlite").then_some(source_definition),
+        risk_level: "medium".into(),
+    });
+    Ok(())
+}
+
+fn normalize_ddl(sql: &str) -> String {
+    sql.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches(';')
+        .to_ascii_lowercase()
 }
 
 fn compare_table_comment(

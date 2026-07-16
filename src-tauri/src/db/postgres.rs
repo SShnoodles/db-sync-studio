@@ -182,6 +182,22 @@ pub fn show_create_table(connection: &DbConnection, table: &str) -> Result<Strin
     Ok(sql)
 }
 
+pub fn show_create_view(connection: &DbConnection, view: &str) -> Result<String, String> {
+    let mut client = client(connection)?;
+    let definition: String = client
+        .query_one(
+            "SELECT pg_get_viewdef(format('%I.%I', current_schema(), $1)::regclass, true)",
+            &[&view],
+        )
+        .map_err(|error| format!("Unable to read CREATE VIEW for {view}: {error}"))?
+        .get(0);
+    Ok(format!(
+        "CREATE OR REPLACE VIEW {} AS\n{};",
+        quote_identifier(view),
+        definition.trim().trim_end_matches(';')
+    ))
+}
+
 pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String>, String> {
     let mut client = client(connection)?;
     client

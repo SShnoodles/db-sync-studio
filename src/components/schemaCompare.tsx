@@ -235,7 +235,8 @@ function sqlWithTableComments(entries: DiffEntry[]) {
           return statements.length > 0 ? `-- ${label}: ${statements.length}\n${statements.join("\n")}` : "";
         })
         .filter(Boolean);
-      return sections.length > 0 ? `-- ${objectType === "type" ? "Type" : "Table"}: ${tableName}\n${sections.join("\n")}` : "";
+      const objectLabel = objectType === "type" ? "Type" : objectType === "view" ? "View" : "Table";
+      return sections.length > 0 ? `-- ${objectLabel}: ${tableName}\n${sections.join("\n")}` : "";
     })
     .filter(Boolean)
     .join("\n\n");
@@ -243,6 +244,7 @@ function sqlWithTableComments(entries: DiffEntry[]) {
 
 function schemaObjectOrder(objectType: string) {
   if (objectType === "type") return 0;
+  if (objectType === "view") return 1;
   if (objectType === "table" || objectType === "column") return 1;
   return 2;
 }
@@ -268,7 +270,7 @@ function buildTree(diffs: DiffEntry[], side: "source" | "target"): TreeDataNode[
 
 function DiffNodeTitle({ diff, side }: { diff: SchemaDiff; side: "source" | "target" }) {
   const { t } = useI18n();
-  const label = diff.columnName || (diff.objectType === "type" ? "(type)" : "(table)");
+  const label = diff.columnName || (diff.objectType === "type" ? "(type)" : diff.objectType === "view" ? "(view)" : "(table)");
   const value = side === "source" ? diff.sourceValue : diff.targetValue;
 
   return (

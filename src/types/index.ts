@@ -19,6 +19,8 @@ export type DataSyncTableMeta = {
   name: string;
   sourceExists: boolean;
   targetExists: boolean;
+  sourceObjectType?: string;
+  targetObjectType?: string;
 };
 
 export type CompareTask = {
@@ -33,7 +35,7 @@ export type CompareTask = {
 };
 
 export type SchemaDiff = {
-  objectType: "table" | "column" | "type";
+  objectType: "table" | "view" | "column" | "type";
   tableName: string;
   columnName?: string;
   diffType: "added" | "removed" | "modified";

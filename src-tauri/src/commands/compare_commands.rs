@@ -1,6 +1,6 @@
 use chrono::Utc;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
@@ -67,24 +67,28 @@ pub fn list_data_sync_tables(
     let source = store.get_connection(&source_id)?;
     let target = store.get_connection(&target_id)?;
     db::ensure_same_db_type(&source, &target)?;
-    let source_names = db::list_tables(&source)?
+    let source_objects = db::list_tables(&source)?
         .into_iter()
-        .map(|table| table.name)
-        .collect::<HashSet<_>>();
-    let target_names = db::list_tables(&target)?
+        .map(|table| (table.name, table.table_type))
+        .collect::<HashMap<_, _>>();
+    let target_objects = db::list_tables(&target)?
         .into_iter()
-        .map(|table| table.name)
-        .collect::<HashSet<_>>();
-    let mut names = source_names
-        .union(&target_names)
+        .map(|table| (table.name, table.table_type))
+        .collect::<HashMap<_, _>>();
+    let mut names = source_objects
+        .keys()
+        .chain(target_objects.keys())
         .cloned()
         .collect::<Vec<_>>();
     names.sort();
+    names.dedup();
     Ok(names
         .into_iter()
         .map(|name| db::DataSyncTableMeta {
-            source_exists: source_names.contains(&name),
-            target_exists: target_names.contains(&name),
+            source_exists: source_objects.contains_key(&name),
+            target_exists: target_objects.contains_key(&name),
+            source_object_type: source_objects.get(&name).cloned(),
+            target_object_type: target_objects.get(&name).cloned(),
             name,
         })
         .collect())
@@ -284,7 +288,7 @@ fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {
         total_diffs: diffs.len(),
         table_diffs: diffs
             .iter()
-            .filter(|diff| diff.object_type == "table")
+            .filter(|diff| diff.object_type == "table" || diff.object_type == "view")
             .count(),
         column_diffs: diffs
             .iter()
@@ -363,10 +367,10 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
                 })
             })
             .collect::<Vec<_>>();
-            let object_label = if object_type == "type" {
-                "Type"
-            } else {
-                "Table"
+            let object_label = match object_type.as_str() {
+                "type" => "Type",
+                "view" => "View",
+                _ => "Table",
             };
             (!sections.is_empty())
                 .then(|| format!("-- {object_label}: {object_name}\n{}", sections.join("\n")))
@@ -386,6 +390,7 @@ fn has_schema_sync_sql(diffs: &[db::SchemaDiff]) -> bool {
 fn schema_object_order(object_type: &str) -> u8 {
     match object_type {
         "type" => 0,
+        "view" => 1,
         "table" | "column" => 1,
         _ => 2,
     }

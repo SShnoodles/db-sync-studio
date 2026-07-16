@@ -103,6 +103,22 @@ pub fn show_create_table(config: &DbConnection, table: &str) -> Result<String, S
     })
 }
 
+pub fn show_create_view(config: &DbConnection, view: &str) -> Result<String, String> {
+    let connection = connection(config)?;
+    let sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'view' AND name = ?1",
+            [view],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Unable to read CREATE VIEW for {view}: {error}"))?;
+    Ok(if sql.trim_end().ends_with(';') {
+        sql
+    } else {
+        format!("{sql};")
+    })
+}
+
 pub fn primary_keys(config: &DbConnection, table: &str) -> Result<Vec<String>, String> {
     let mut columns = list_columns(config, table)?
         .into_iter()

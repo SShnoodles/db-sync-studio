@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Col, Form, Progress, Row, Select, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Col, Form, Progress, Row, Select, Space, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import { PlayCircleOutlined } from "@ant-design/icons";
 
@@ -18,6 +18,8 @@ type DataSyncRow = {
   tableName: string;
   sourceExists: boolean;
   targetExists: boolean;
+  sourceObjectType?: string;
+  targetObjectType?: string;
   run?: DataCompareRun;
 };
 
@@ -71,7 +73,7 @@ export function DataSyncPage({
     label: connectionOptionLabel(connection),
   }));
   const selectableTables = useMemo(
-    () => tableOptions.filter((table) => table.sourceExists && table.targetExists).map((table) => table.name),
+    () => tableOptions.filter(isDataSyncCompatible).map((table) => table.name),
     [tableOptions],
   );
   const tableMetaByName = useMemo(
@@ -105,6 +107,8 @@ export function DataSyncPage({
         tableName,
         sourceExists: meta?.sourceExists ?? true,
         targetExists: meta?.targetExists ?? true,
+        sourceObjectType: meta?.sourceObjectType,
+        targetObjectType: meta?.targetObjectType,
         run: runByTable.get(tableName),
       };
     });
@@ -117,6 +121,8 @@ export function DataSyncPage({
           tableName: run.tableName,
           sourceExists: meta?.sourceExists ?? true,
           targetExists: meta?.targetExists ?? true,
+          sourceObjectType: meta?.sourceObjectType,
+          targetObjectType: meta?.targetObjectType,
           run,
         };
       }),
@@ -224,8 +230,11 @@ export function DataSyncPage({
     </Space>
   );
 
-  const renderTableName = (exists: boolean, tableName: string) => (
-    <span className={!exists ? "muted-count" : undefined}>{exists ? tableName : "-"}</span>
+  const renderTableName = (exists: boolean, tableName: string, objectType?: string) => (
+    <Space size={6}>
+      <span className={!exists ? "muted-count" : undefined}>{exists ? tableName : "-"}</span>
+      {exists && !isBaseTable(objectType) && <Tag color="orange">{objectType || "VIEW"}</Tag>}
+    </Space>
   );
 
   const columns: TableColumnsType<DataSyncRow> = [
@@ -233,13 +242,13 @@ export function DataSyncPage({
       title: t("data.sourceTable"),
       dataIndex: "tableName",
       width: 220,
-      render: (value, row) => renderTableName(row.sourceExists, value),
+      render: (value, row) => renderTableName(row.sourceExists, value, row.sourceObjectType),
     },
     {
       title: t("data.targetTable"),
       dataIndex: "tableName",
       width: 220,
-      render: (value, row) => renderTableName(row.targetExists, value),
+      render: (value, row) => renderTableName(row.targetExists, value, row.targetObjectType),
     },
     {
       title: t("data.insert"),
@@ -361,7 +370,7 @@ export function DataSyncPage({
                     selectedRowKeys: selectedTables,
                     onChange: setSelectedTables,
                     getCheckboxProps: (row) => ({
-                      disabled: !row.sourceExists || !row.targetExists,
+                      disabled: !isDataSyncCompatible(row),
                     }),
                   }}
                 />
@@ -438,7 +447,7 @@ export function DataSyncPage({
               selectedRowKeys: fullySelectedResultTables,
               onChange: toggleResultRows,
               getCheckboxProps: (row) => ({
-                disabled: !row.sourceExists || !row.targetExists,
+                disabled: !isDataSyncCompatible(row),
               }),
             }}
           />
@@ -484,6 +493,17 @@ export function DataSyncPage({
       )}
     </>
   );
+}
+
+function isBaseTable(objectType?: string) {
+  return objectType?.toUpperCase() === "BASE TABLE";
+}
+
+function isDataSyncCompatible(table: Pick<DataSyncRow, "sourceExists" | "targetExists" | "sourceObjectType" | "targetObjectType">) {
+  return table.sourceExists
+    && table.targetExists
+    && isBaseTable(table.sourceObjectType)
+    && isBaseTable(table.targetObjectType);
 }
 
 type DataSqlDiff = DataCompareRun["diffs"][number];
