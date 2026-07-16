@@ -57,7 +57,7 @@ cargo check
 
 ## Local data
 
-Connection settings and comparison history are stored locally in SQLite. They are not uploaded to any remote service.
+Non-sensitive connection settings and comparison history are stored locally in SQLite. Database passwords are stored in the operating system credential vault (Keychain, Credential Manager, or Secret Service) and are never written to the local SQLite file. Nothing is uploaded to a remote service.
 
 Default macOS path:
 
@@ -70,4 +70,4 @@ Default macOS path:
 - Source and target must use the same database type.
 - Data sync requires primary keys.
 - Schema and data sync can execute selected SQL on the target database.
-- Large table comparison is limited by the current row fetch limit.
+- Data comparisons stop at 100,000 rows per table. Truncated results are review-only and cannot generate synchronization SQL.

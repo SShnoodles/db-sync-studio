@@ -1,4 +1,6 @@
-use postgres::{Client, NoTls, Row};
+use native_tls::TlsConnector;
+use postgres::{config::SslMode, Client, Config, Row};
+use postgres_native_tls::MakeTlsConnector;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
@@ -10,11 +12,24 @@ fn client(connection: &DbConnection) -> Result<Client, String> {
     let port = connection.port.unwrap_or(5432);
     let user = connection.username.as_deref().unwrap_or("postgres");
     let password = connection.password.as_deref().unwrap_or("");
-    let config = format!(
-        "host={} port={} user={} password={} dbname={}",
-        host, port, user, password, connection.database
-    );
-    Client::connect(&config, NoTls)
+    let ssl_mode = match connection.ssl_mode.as_deref().unwrap_or("require") {
+        "disable" => SslMode::Disable,
+        "prefer" => SslMode::Prefer,
+        _ => SslMode::Require,
+    };
+    let mut config = Config::new();
+    config
+        .host(host)
+        .port(port)
+        .user(user)
+        .password(password)
+        .dbname(&connection.database)
+        .ssl_mode(ssl_mode);
+    let connector = TlsConnector::builder()
+        .build()
+        .map_err(|error| format!("Unable to configure PostgreSQL TLS: {error}"))?;
+    config
+        .connect(MakeTlsConnector::new(connector))
         .map_err(|error| format!("Unable to connect to PostgreSQL: {error}"))
 }
 

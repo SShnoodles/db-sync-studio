@@ -1,4 +1,7 @@
-use crate::db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection};
+use crate::{
+    credential,
+    db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection},
+};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -128,6 +131,50 @@ fn backfill_compare_history_columns(connection: &Connection) -> Result<(), Strin
     Ok(())
 }
 
+fn migrate_legacy_connection_passwords(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("SELECT id, config_json FROM connections")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    drop(statement);
+
+    for (id, json) in rows {
+        let mut item: DbConnection =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let mut changed = false;
+        if let Some(password) = item.password.take() {
+            if !password.is_empty() {
+                credential::store_password(&id, &password)?;
+            }
+            changed = true;
+        }
+        if item.db_type != "sqlite"
+            && (item.ssl_mode.is_none()
+                || (item.db_type == "mysql" && item.ssl_mode.as_deref() == Some("prefer")))
+        {
+            item.ssl_mode = Some("require".into());
+            changed = true;
+        }
+        if !changed {
+            continue;
+        }
+        let sanitized_json = serde_json::to_string(&item).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "UPDATE connections SET config_json = ?1 WHERE id = ?2",
+                params![sanitized_json, id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 impl LocalStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
         let connection = Connection::open(path).map_err(|error| error.to_string())?;
@@ -163,6 +210,7 @@ impl LocalStore {
             )
             .map_err(|error| error.to_string())?;
         ensure_compare_history_columns(&connection)?;
+        migrate_legacy_connection_passwords(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -199,7 +247,10 @@ impl LocalStore {
                 |row| row.get(0),
             )
             .map_err(|_| "Connection was not found".to_string())?;
-        serde_json::from_str(&json).map_err(|error| error.to_string())
+        let mut item: DbConnection =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        credential::hydrate_password(&mut item)?;
+        Ok(item)
     }
 
     pub fn save_connection(&self, item: &DbConnection) -> Result<(), String> {
@@ -207,7 +258,16 @@ impl LocalStore {
             .connection
             .lock()
             .map_err(|_| "Storage lock failed".to_string())?;
-        let json = serde_json::to_string(item).map_err(|error| error.to_string())?;
+        if let Some(password) = item
+            .password
+            .as_deref()
+            .filter(|password| !password.is_empty())
+        {
+            credential::store_password(&item.id, password)?;
+        }
+        let mut stored_item = item.clone();
+        stored_item.password = None;
+        let json = serde_json::to_string(&stored_item).map_err(|error| error.to_string())?;
         connection.execute("INSERT INTO connections (id, name, config_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(id) DO UPDATE SET name = excluded.name, config_json = excluded.config_json, updated_at = excluded.updated_at",
             params![item.id, item.name, json, item.created_at, item.updated_at]
@@ -216,6 +276,25 @@ impl LocalStore {
     }
 
     pub fn delete_connection(&self, id: &str) -> Result<(), String> {
+        let db_type = {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| "Storage lock failed".to_string())?;
+            let json: String = connection
+                .query_row(
+                    "SELECT config_json FROM connections WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "Connection was not found".to_string())?;
+            serde_json::from_str::<DbConnection>(&json)
+                .map_err(|error| error.to_string())?
+                .db_type
+        };
+        if db_type != "sqlite" {
+            credential::delete_password(id)?;
+        }
         let connection = self
             .connection
             .lock()

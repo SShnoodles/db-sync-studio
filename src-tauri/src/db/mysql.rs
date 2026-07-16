@@ -1,4 +1,4 @@
-use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, TxOpts, Value};
+use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, TxOpts, Value};
 use serde_json::{Number, Value as JsonValue};
 use std::collections::{BTreeMap, HashMap};
 
@@ -6,12 +6,14 @@ use super::{ColumnMeta, DbConnection, TableMeta};
 
 fn pool(connection: &DbConnection) -> Result<Pool, String> {
     connection.validate()?;
+    let ssl_mode = connection.ssl_mode.as_deref().unwrap_or("require");
     let options = OptsBuilder::new()
         .ip_or_hostname(Some(connection.host.clone().unwrap_or_default()))
         .tcp_port(connection.port.unwrap_or(3306))
         .db_name(Some(connection.database.clone()))
         .user(connection.username.clone())
-        .pass(connection.password.clone());
+        .pass(connection.password.clone())
+        .ssl_opts((ssl_mode != "disable").then(SslOpts::default));
     Pool::new(options).map_err(|error| format!("Unable to create MySQL connection: {error}"))
 }
 

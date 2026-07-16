@@ -1,4 +1,5 @@
 mod commands;
+mod credential;
 mod db;
 mod diff;
 mod sqlgen;

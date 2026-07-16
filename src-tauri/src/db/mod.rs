@@ -37,6 +37,14 @@ impl DbConnection {
         if self.database.trim().is_empty() {
             return Err("Database is required".into());
         }
+        if self.db_type != "sqlite"
+            && !matches!(
+                self.ssl_mode.as_deref().unwrap_or("require"),
+                "disable" | "prefer" | "require"
+            )
+        {
+            return Err("SSL mode must be disable, prefer or require".into());
+        }
         Ok(())
     }
 }

@@ -119,6 +119,7 @@ export function ConnectionsPage(props: {
                           port: value === "sqlite" ? undefined : value === "postgresql" ? 5432 : 3306,
                           username: value === "sqlite" ? "" : value === "postgresql" ? "postgres" : "root",
                           password: value === "sqlite" ? "" : props.form.getFieldValue("password"),
+                          sslMode: value === "sqlite" ? undefined : "require",
                         });
                       }}
                     />
@@ -166,14 +167,19 @@ export function ConnectionsPage(props: {
                     </Col>
                     <Col xs={24} md={12}>
                       <Form.Item label={t("connections.password")} name="password">
-                        <Input.Password {...plainTextInputProps} placeholder={t("connections.passwordPlaceholder")} />
+                        <Input.Password
+                          {...plainTextInputProps}
+                          placeholder={props.selected
+                            ? t("connections.passwordStoredPlaceholder")
+                            : t("connections.passwordPlaceholder")}
+                        />
                       </Form.Item>
                     </Col>
                     <Col span={24}>
                       <Form.Item label={t("connections.sslMode")} name="sslMode">
                         <Select
                           options={[
-                            { value: "prefer", label: "Prefer" },
+                            ...(dbType === "postgresql" ? [{ value: "prefer", label: "Prefer" }] : []),
                             { value: "disable", label: "Disable" },
                             { value: "require", label: "Require" },
                           ]}

@@ -11,7 +11,7 @@ export const blankConnection = (): DbConnection => ({
   database: "",
   username: "root",
   password: "",
-  sslMode: "prefer",
+  sslMode: "require",
   environment: "Development",
   createdAt: now(),
   updatedAt: now(),
