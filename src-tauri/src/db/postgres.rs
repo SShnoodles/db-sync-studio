@@ -98,6 +98,7 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
                       AND idx.indisprimary
                       AND attr.attnum = ANY(idx.indkey)
                 ) AS is_primary_key,
+                CASE WHEN attr.attgenerated <> '' THEN 'generated' ELSE NULL END AS extra,
                 attr.attnum::int4 AS ordinal_position,
                 col_description(attr.attrelid, attr.attnum) AS comment
              FROM pg_attribute attr
@@ -123,9 +124,9 @@ pub fn list_columns(connection: &DbConnection, table: &str) -> Result<Vec<Column
             nullable: row.get::<_, String>(3) == "YES",
             default_value: row.get(4),
             is_primary_key: row.get(5),
-            extra: None,
-            ordinal_position: row.get::<_, i32>(6) as u64,
-            comment: row.get(7),
+            extra: row.get(6),
+            ordinal_position: row.get::<_, i32>(7) as u64,
+            comment: row.get(8),
             spatial_srid: None,
         })
         .collect())

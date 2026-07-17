@@ -50,7 +50,7 @@ pub fn list_tables(config: &DbConnection) -> Result<Vec<TableMeta>, String> {
 
 pub fn list_columns(config: &DbConnection, table: &str) -> Result<Vec<ColumnMeta>, String> {
     let connection = connection(config)?;
-    let sql = format!("PRAGMA table_info({})", quote_identifier(table));
+    let sql = format!("PRAGMA table_xinfo({})", quote_identifier(table));
     let mut statement = connection
         .prepare(&sql)
         .map_err(|error| format!("Unable to load columns for {table}: {error}"))?;
@@ -62,6 +62,7 @@ pub fn list_columns(config: &DbConnection, table: &str) -> Result<Vec<ColumnMeta
             let not_null: i64 = row.get(3)?;
             let default_value: Option<String> = row.get(4)?;
             let pk_position: i64 = row.get(5)?;
+            let hidden: i64 = row.get(6)?;
             Ok(ColumnMeta {
                 table_name: table.into(),
                 name,
@@ -73,7 +74,7 @@ pub fn list_columns(config: &DbConnection, table: &str) -> Result<Vec<ColumnMeta
                 nullable: not_null == 0 && pk_position == 0,
                 default_value,
                 is_primary_key: pk_position > 0,
-                extra: None,
+                extra: (hidden >= 2).then(|| "generated".into()),
                 ordinal_position: (cid + 1) as u64,
                 comment: None,
                 spatial_srid: None,

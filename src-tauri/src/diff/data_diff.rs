@@ -21,19 +21,33 @@ pub fn compare_data(
                 .into(),
         );
     }
+    let target_key_columns = db::primary_keys(target, &request.table_name)?;
 
     let source_columns = db::list_columns(source, &request.table_name)?;
     let target_columns = db::list_columns(target, &request.table_name)?;
+    validate_schema_compatibility(
+        source,
+        &source_columns,
+        &target_columns,
+        &key_columns,
+        &target_key_columns,
+    )?;
     let target_column_map = target_columns
         .iter()
         .map(|column| (column.name.clone(), column.clone()))
         .collect::<HashMap<_, _>>();
     let source_column_order = source_columns
         .iter()
+        .filter(|column| {
+            target_column_map
+                .get(&column.name)
+                .is_none_or(|target_column| !is_generated_column(target_column))
+        })
         .map(|column| column.name.clone())
         .collect::<Vec<_>>();
     let target_column_order = target_columns
         .iter()
+        .filter(|column| !is_generated_column(column))
         .map(|column| column.name.clone())
         .collect::<Vec<_>>();
     let (source_rows, source_truncated) =
@@ -121,6 +135,128 @@ pub fn compare_data(
     };
 
     Ok((key_columns, summary, diffs, sync_sql))
+}
+
+fn validate_schema_compatibility(
+    connection: &DbConnection,
+    source_columns: &[db::ColumnMeta],
+    target_columns: &[db::ColumnMeta],
+    source_keys: &[String],
+    target_keys: &[String],
+) -> Result<(), String> {
+    let mut issues = Vec::new();
+    if source_keys != target_keys {
+        issues.push(format!(
+            "primary keys differ (source: [{}], target: [{}])",
+            source_keys.join(", "),
+            target_keys.join(", ")
+        ));
+    }
+
+    let source_map = source_columns
+        .iter()
+        .map(|column| (column.name.as_str(), column))
+        .collect::<HashMap<_, _>>();
+    let target_map = target_columns
+        .iter()
+        .map(|column| (column.name.as_str(), column))
+        .collect::<HashMap<_, _>>();
+
+    for source_column in source_columns {
+        let Some(target_column) = target_map.get(source_column.name.as_str()) else {
+            issues.push(format!(
+                "source column `{}` does not exist in the target",
+                source_column.name
+            ));
+            continue;
+        };
+        if canonical_column_type(&connection.db_type, &source_column.column_type)
+            != canonical_column_type(&connection.db_type, &target_column.column_type)
+        {
+            issues.push(format!(
+                "column `{}` has incompatible types (source: {}, target: {})",
+                source_column.name, source_column.column_type, target_column.column_type
+            ));
+        }
+    }
+
+    for target_column in target_columns {
+        if source_map.contains_key(target_column.name.as_str())
+            || target_column.nullable
+            || target_column.default_value.is_some()
+            || target_column
+                .extra
+                .as_deref()
+                .is_some_and(|extra| extra.to_ascii_lowercase().contains("auto_increment"))
+            || is_generated_column(target_column)
+        {
+            continue;
+        }
+        issues.push(format!(
+            "required target column `{}` has no source value or default",
+            target_column.name
+        ));
+    }
+
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Data synchronization preflight failed: {}",
+            issues.join("; ")
+        ))
+    }
+}
+
+fn canonical_column_type(db_type: &str, column_type: &str) -> String {
+    let normalized = column_type
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if db_type == "sqlite" {
+        if normalized.contains("int") {
+            return "integer".into();
+        }
+        if normalized.contains("char") || normalized.contains("clob") || normalized.contains("text")
+        {
+            return "text".into();
+        }
+        if normalized.contains("blob") || normalized.is_empty() {
+            return "blob".into();
+        }
+        if normalized.contains("real") || normalized.contains("floa") || normalized.contains("doub")
+        {
+            return "real".into();
+        }
+        return "numeric".into();
+    }
+    if db_type == "mysql" {
+        for integer_type in [
+            "tinyint",
+            "smallint",
+            "mediumint",
+            "int",
+            "integer",
+            "bigint",
+        ] {
+            if normalized.starts_with(&format!("{integer_type}(")) {
+                let suffix = normalized
+                    .split_once(')')
+                    .map(|(_, suffix)| suffix.trim())
+                    .unwrap_or_default();
+                return format!("{integer_type} {suffix}").trim().to_string();
+            }
+        }
+    }
+    normalized
+}
+
+fn is_generated_column(column: &db::ColumnMeta) -> bool {
+    column
+        .extra
+        .as_deref()
+        .is_some_and(|extra| extra.to_ascii_lowercase().contains("generated"))
 }
 
 fn fetch_rows_in_batches(
@@ -717,5 +853,84 @@ fn value_key(value: &Value) -> String {
     match value {
         Value::Null => "<NULL>".into(),
         _ => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preflight_reports_primary_key_type_and_required_column_issues() {
+        let source = vec![column("id", "integer", false, true, None)];
+        let target = vec![
+            column("id", "text", false, true, None),
+            column("tenant_id", "integer", false, true, None),
+        ];
+        let error = validate_schema_compatibility(
+            &connection("sqlite"),
+            &source,
+            &target,
+            &["id".into()],
+            &["tenant_id".into(), "id".into()],
+        )
+        .unwrap_err();
+
+        assert!(error.contains("primary keys differ"));
+        assert!(error.contains("column `id` has incompatible types"));
+        assert!(error.contains("required target column `tenant_id`"));
+    }
+
+    #[test]
+    fn sqlite_affinity_compatible_types_pass_preflight() {
+        let source = vec![column("id", "INT", false, true, None)];
+        let target = vec![column("id", "INTEGER", false, true, None)];
+
+        validate_schema_compatibility(
+            &connection("sqlite"),
+            &source,
+            &target,
+            &["id".into()],
+            &["id".into()],
+        )
+        .unwrap();
+    }
+
+    fn column(
+        name: &str,
+        column_type: &str,
+        nullable: bool,
+        primary: bool,
+        default_value: Option<&str>,
+    ) -> db::ColumnMeta {
+        db::ColumnMeta {
+            table_name: "items".into(),
+            name: name.into(),
+            column_type: column_type.into(),
+            nullable,
+            default_value: default_value.map(Into::into),
+            is_primary_key: primary,
+            extra: None,
+            ordinal_position: 1,
+            comment: None,
+            spatial_srid: None,
+        }
+    }
+
+    fn connection(db_type: &str) -> DbConnection {
+        DbConnection {
+            id: "test".into(),
+            name: "test".into(),
+            db_type: db_type.into(),
+            host: None,
+            port: None,
+            database: "test".into(),
+            username: None,
+            password: None,
+            ssl_mode: None,
+            environment: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
     }
 }
