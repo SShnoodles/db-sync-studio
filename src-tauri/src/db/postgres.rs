@@ -4,7 +4,7 @@ use postgres_native_tls::MakeTlsConnector;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
-use super::{ColumnMeta, DbConnection, TableMeta, TypeMeta};
+use super::{ColumnMeta, DbConnection, ForeignKeyMeta, IndexMeta, TableMeta, TypeMeta};
 
 fn client(connection: &DbConnection) -> Result<Client, String> {
     connection.validate()?;
@@ -231,6 +231,99 @@ pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String
         )
         .map_err(|error| format!("Unable to load primary keys for {table}: {error}"))
         .map(|rows| rows.into_iter().map(|row| row.get(0)).collect())
+}
+
+pub fn list_indexes(connection: &DbConnection, table: &str) -> Result<Vec<IndexMeta>, String> {
+    let mut client = client(connection)?;
+    let rows = client
+        .query(
+            "SELECT idx.relname, i.indisunique, i.indisprimary, pg_get_indexdef(i.indexrelid)
+             FROM pg_index i
+             JOIN pg_class tbl ON tbl.oid = i.indrelid
+             JOIN pg_class idx ON idx.oid = i.indexrelid
+             JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
+             WHERE ns.nspname = current_schema() AND tbl.relname = $1 AND NOT i.indisprimary
+             ORDER BY idx.relname",
+            &[&table],
+        )
+        .map_err(|error| format!("Unable to load indexes for {table}: {error}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let definition: String = row.get(3);
+            IndexMeta {
+                name: row.get(0),
+                columns: index_columns_from_definition(&definition),
+                unique: row.get(1),
+                primary: row.get(2),
+                definition: Some(format!("{};", definition.trim_end_matches(';'))),
+            }
+        })
+        .collect())
+}
+
+pub fn list_foreign_keys(
+    connection: &DbConnection,
+    table: &str,
+) -> Result<Vec<ForeignKeyMeta>, String> {
+    let mut client = client(connection)?;
+    let rows = client
+        .query(
+            "SELECT tc.constraint_name, kcu.column_name, ccu.table_name,
+                    ccu.column_name, rc.update_rule, rc.delete_rule
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+               ON kcu.constraint_catalog = tc.constraint_catalog
+              AND kcu.constraint_schema = tc.constraint_schema
+              AND kcu.constraint_name = tc.constraint_name
+             JOIN information_schema.referential_constraints rc
+               ON rc.constraint_catalog = tc.constraint_catalog
+              AND rc.constraint_schema = tc.constraint_schema
+              AND rc.constraint_name = tc.constraint_name
+             JOIN information_schema.key_column_usage ccu
+               ON ccu.constraint_catalog = rc.unique_constraint_catalog
+              AND ccu.constraint_schema = rc.unique_constraint_schema
+              AND ccu.constraint_name = rc.unique_constraint_name
+              AND ccu.ordinal_position = kcu.position_in_unique_constraint
+             WHERE tc.constraint_type = 'FOREIGN KEY'
+               AND tc.table_schema = current_schema() AND tc.table_name = $1
+             ORDER BY tc.constraint_name, kcu.ordinal_position",
+            &[&table],
+        )
+        .map_err(|error| format!("Unable to load foreign keys for {table}: {error}"))?;
+    let mut keys = Vec::<ForeignKeyMeta>::new();
+    for row in rows {
+        let name: String = row.get(0);
+        let column: String = row.get(1);
+        let referenced_column: String = row.get(3);
+        if let Some(key) = keys.iter_mut().find(|key| key.name == name) {
+            key.columns.push(column);
+            key.referenced_columns.push(referenced_column);
+        } else {
+            keys.push(ForeignKeyMeta {
+                name,
+                columns: vec![column],
+                referenced_table: row.get(2),
+                referenced_columns: vec![referenced_column],
+                on_update: Some(row.get(4)),
+                on_delete: Some(row.get(5)),
+            });
+        }
+    }
+    Ok(keys)
+}
+
+fn index_columns_from_definition(definition: &str) -> Vec<String> {
+    definition
+        .rsplit_once('(')
+        .and_then(|(_, columns)| columns.rsplit_once(')'))
+        .map(|(columns, _)| {
+            columns
+                .split(',')
+                .map(|column| column.trim().trim_matches('"').to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn fetch_rows(

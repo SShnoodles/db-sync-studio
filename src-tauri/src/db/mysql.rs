@@ -2,7 +2,7 @@ use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, TxOpts, Value};
 use serde_json::{Number, Value as JsonValue};
 use std::collections::{BTreeMap, HashMap};
 
-use super::{ColumnMeta, DbConnection, TableMeta};
+use super::{ColumnMeta, DbConnection, ForeignKeyMeta, IndexMeta, TableMeta};
 
 fn pool(connection: &DbConnection) -> Result<Pool, String> {
     connection.validate()?;
@@ -149,6 +149,100 @@ pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String
         |column_name: String| column_name,
     )
     .map_err(|error| format!("Unable to load primary keys for {table}: {error}"))
+}
+
+pub fn list_indexes(connection: &DbConnection, table: &str) -> Result<Vec<IndexMeta>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let rows: Vec<(String, u8, String)> = conn
+        .exec(
+            "SELECT index_name, non_unique, column_name
+             FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = ? AND index_name <> 'PRIMARY'
+             ORDER BY index_name, seq_in_index",
+            (table,),
+        )
+        .map_err(|error| format!("Unable to load indexes for {table}: {error}"))?;
+    let mut indexes = Vec::<IndexMeta>::new();
+    for (name, non_unique, column) in rows {
+        if let Some(index) = indexes.iter_mut().find(|index| index.name == name) {
+            index.columns.push(column);
+        } else {
+            indexes.push(IndexMeta {
+                name,
+                columns: vec![column],
+                unique: non_unique == 0,
+                primary: false,
+                definition: None,
+            });
+        }
+    }
+    for index in &mut indexes {
+        let columns = index
+            .columns
+            .iter()
+            .map(|column| format!("`{}`", escape_identifier(column)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        index.definition = Some(format!(
+            "CREATE {}INDEX `{}` ON `{}` ({});",
+            if index.unique { "UNIQUE " } else { "" },
+            escape_identifier(&index.name),
+            escape_identifier(table),
+            columns
+        ));
+    }
+    Ok(indexes)
+}
+
+pub fn list_foreign_keys(
+    connection: &DbConnection,
+    table: &str,
+) -> Result<Vec<ForeignKeyMeta>, String> {
+    let pool = pool(connection)?;
+    let mut conn = pool
+        .get_conn()
+        .map_err(|error| format!("Connection failed: {error}"))?;
+    let rows: Vec<(String, String, String, String, String, String)> = conn
+        .exec(
+            "SELECT k.constraint_name, k.column_name, k.referenced_table_name,
+                    k.referenced_column_name, r.update_rule, r.delete_rule
+             FROM information_schema.key_column_usage k
+             JOIN information_schema.referential_constraints r
+               ON r.constraint_schema = k.constraint_schema
+              AND r.constraint_name = k.constraint_name
+              AND r.table_name = k.table_name
+             WHERE k.table_schema = DATABASE() AND k.table_name = ?
+               AND k.referenced_table_name IS NOT NULL
+             ORDER BY k.constraint_name, k.ordinal_position",
+            (table,),
+        )
+        .map_err(|error| format!("Unable to load foreign keys for {table}: {error}"))?;
+    Ok(group_foreign_keys(rows))
+}
+
+fn group_foreign_keys(
+    rows: Vec<(String, String, String, String, String, String)>,
+) -> Vec<ForeignKeyMeta> {
+    let mut keys = Vec::<ForeignKeyMeta>::new();
+    for (name, column, referenced_table, referenced_column, on_update, on_delete) in rows {
+        if let Some(key) = keys.iter_mut().find(|key| key.name == name) {
+            key.columns.push(column);
+            key.referenced_columns.push(referenced_column);
+        } else {
+            keys.push(ForeignKeyMeta {
+                name,
+                columns: vec![column],
+                referenced_table,
+                referenced_columns: vec![referenced_column],
+                on_update: Some(on_update),
+                on_delete: Some(on_delete),
+            });
+        }
+    }
+    keys
 }
 
 pub fn fetch_rows(

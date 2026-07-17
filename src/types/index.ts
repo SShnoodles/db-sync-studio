@@ -35,7 +35,7 @@ export type CompareTask = {
 };
 
 export type SchemaDiff = {
-  objectType: "table" | "view" | "column" | "type";
+  objectType: "table" | "view" | "column" | "index" | "foreignKey" | "type";
   tableName: string;
   columnName?: string;
   diffType: "added" | "removed" | "modified";

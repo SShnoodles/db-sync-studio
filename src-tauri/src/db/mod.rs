@@ -110,6 +110,27 @@ pub fn primary_keys(connection: &DbConnection, table: &str) -> Result<Vec<String
     }
 }
 
+pub fn list_indexes(connection: &DbConnection, table: &str) -> Result<Vec<IndexMeta>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::list_indexes(connection, table),
+        "postgresql" => postgres::list_indexes(connection, table),
+        "sqlite" => sqlite::list_indexes(connection, table),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
+pub fn list_foreign_keys(
+    connection: &DbConnection,
+    table: &str,
+) -> Result<Vec<ForeignKeyMeta>, String> {
+    match connection.db_type.as_str() {
+        "mysql" => mysql::list_foreign_keys(connection, table),
+        "postgresql" => postgres::list_foreign_keys(connection, table),
+        "sqlite" => sqlite::list_foreign_keys(connection, table),
+        _ => Err("Unsupported database type".into()),
+    }
+}
+
 pub fn fetch_rows(
     connection: &DbConnection,
     table: &str,
@@ -199,6 +220,27 @@ pub struct ColumnMeta {
 pub struct TypeMeta {
     pub name: String,
     pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexMeta {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+    pub primary: bool,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignKeyMeta {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+    pub on_update: Option<String>,
+    pub on_delete: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

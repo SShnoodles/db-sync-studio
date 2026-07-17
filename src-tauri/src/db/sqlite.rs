@@ -1,8 +1,8 @@
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use rusqlite::{types::ValueRef, Connection, OpenFlags, OptionalExtension};
 use serde_json::{Number, Value as JsonValue};
 use std::collections::BTreeMap;
 
-use super::{ColumnMeta, DbConnection, TableMeta};
+use super::{ColumnMeta, DbConnection, ForeignKeyMeta, IndexMeta, TableMeta};
 
 fn connection(config: &DbConnection) -> Result<Connection, String> {
     config.validate()?;
@@ -126,6 +126,100 @@ pub fn primary_keys(config: &DbConnection, table: &str) -> Result<Vec<String>, S
         .collect::<Vec<_>>();
     columns.sort_by_key(|column| column.ordinal_position);
     Ok(columns.into_iter().map(|column| column.name).collect())
+}
+
+pub fn list_indexes(config: &DbConnection, table: &str) -> Result<Vec<IndexMeta>, String> {
+    let connection = connection(config)?;
+    let sql = format!("PRAGMA index_list({})", quote_identifier(table));
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Unable to load indexes for {table}: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to load indexes for {table}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to load indexes for {table}: {error}"))?;
+    drop(statement);
+
+    rows.into_iter()
+        .map(|(name, unique, origin)| {
+            let info_sql = format!("PRAGMA index_info({})", quote_identifier(&name));
+            let mut info_statement = connection
+                .prepare(&info_sql)
+                .map_err(|error| format!("Unable to load index {name}: {error}"))?;
+            let columns = info_statement
+                .query_map([], |row| row.get::<_, String>(2))
+                .map_err(|error| format!("Unable to load index {name}: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Unable to load index {name}: {error}"))?;
+            let definition = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?1",
+                    [&name],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| format!("Unable to load index {name}: {error}"))?
+                .flatten()
+                .map(|sql| format!("{};", sql.trim_end_matches(';')));
+            Ok(IndexMeta {
+                name,
+                columns,
+                unique,
+                primary: origin == "pk",
+                definition,
+            })
+        })
+        .collect()
+}
+
+pub fn list_foreign_keys(
+    config: &DbConnection,
+    table: &str,
+) -> Result<Vec<ForeignKeyMeta>, String> {
+    let connection = connection(config)?;
+    let sql = format!("PRAGMA foreign_key_list({})", quote_identifier(table));
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Unable to load foreign keys for {table}: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to load foreign keys for {table}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to load foreign keys for {table}: {error}"))?;
+    let mut keys = Vec::<ForeignKeyMeta>::new();
+    for (id, referenced_table, column, referenced_column, on_update, on_delete) in rows {
+        let name = format!("foreign_key_{id}");
+        if let Some(key) = keys.iter_mut().find(|key| key.name == name) {
+            key.columns.push(column);
+            key.referenced_columns.push(referenced_column);
+        } else {
+            keys.push(ForeignKeyMeta {
+                name,
+                columns: vec![column],
+                referenced_table,
+                referenced_columns: vec![referenced_column],
+                on_update: Some(on_update),
+                on_delete: Some(on_delete),
+            });
+        }
+    }
+    Ok(keys)
 }
 
 pub fn fetch_rows(
@@ -261,6 +355,44 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
             .unwrap();
         assert_eq!(row_count, 0);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn loads_indexes_and_foreign_keys() {
+        let path = std::env::temp_dir().join(format!(
+            "db-sync-studio-schema-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE parents (id INTEGER PRIMARY KEY);
+                 CREATE TABLE children (
+                   id INTEGER PRIMARY KEY,
+                   parent_id INTEGER,
+                   code TEXT,
+                   FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE
+                 );
+                 CREATE UNIQUE INDEX idx_children_code ON children(code);",
+            )
+            .unwrap();
+        let config = sqlite_test_connection(path.to_string_lossy().into_owned());
+
+        let indexes = list_indexes(&config, "children").unwrap();
+        assert_eq!(indexes.len(), 1);
+        assert_eq!(indexes[0].name, "idx_children_code");
+        assert!(indexes[0].unique);
+        assert_eq!(indexes[0].columns, vec!["code"]);
+
+        let foreign_keys = list_foreign_keys(&config, "children").unwrap();
+        assert_eq!(foreign_keys.len(), 1);
+        assert_eq!(foreign_keys[0].columns, vec!["parent_id"]);
+        assert_eq!(foreign_keys[0].referenced_table, "parents");
+        assert_eq!(foreign_keys[0].referenced_columns, vec!["id"]);
+        assert_eq!(foreign_keys[0].on_delete.as_deref(), Some("CASCADE"));
+
         std::fs::remove_file(path).unwrap();
     }
 

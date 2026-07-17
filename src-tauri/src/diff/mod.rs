@@ -2,7 +2,7 @@ pub mod data_diff;
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::db::{self, ColumnMeta, DbConnection, SchemaDiff, TableMeta};
+use crate::db::{self, ColumnMeta, DbConnection, ForeignKeyMeta, IndexMeta, SchemaDiff, TableMeta};
 
 pub fn compare_schema(
     source: &DbConnection,
@@ -68,6 +68,20 @@ pub fn compare_schema(
                     &table_name,
                     &source_columns,
                     &target_columns,
+                    &mut diffs,
+                );
+                compare_indexes(
+                    target,
+                    &table_name,
+                    db::list_indexes(source, &table_name)?,
+                    db::list_indexes(target, &table_name)?,
+                    &mut diffs,
+                );
+                compare_foreign_keys(
+                    target,
+                    &table_name,
+                    db::list_foreign_keys(source, &table_name)?,
+                    db::list_foreign_keys(target, &table_name)?,
                     &mut diffs,
                 );
             }
@@ -139,6 +153,269 @@ fn normalize_ddl(sql: &str) -> String {
         .join(" ")
         .trim_end_matches(';')
         .to_ascii_lowercase()
+}
+
+fn compare_indexes(
+    target: &DbConnection,
+    table_name: &str,
+    source_indexes: Vec<IndexMeta>,
+    target_indexes: Vec<IndexMeta>,
+    diffs: &mut Vec<SchemaDiff>,
+) {
+    let source = source_indexes
+        .into_iter()
+        .map(|index| (index.name.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let target_indexes = target_indexes
+        .into_iter()
+        .map(|index| (index.name.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let names = source
+        .keys()
+        .chain(target_indexes.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for name in names {
+        match (source.get(&name), target_indexes.get(&name)) {
+            (Some(source_index), None) => diffs.push(index_diff(
+                table_name,
+                &name,
+                "added",
+                Some(source_index),
+                None,
+                source_index.definition.clone(),
+                "low",
+            )),
+            (None, Some(target_index)) => diffs.push(index_diff(
+                table_name,
+                &name,
+                "removed",
+                None,
+                Some(target_index),
+                drop_index_sql(target, table_name, target_index),
+                "medium",
+            )),
+            (Some(source_index), Some(target_index))
+                if index_signature(source_index) != index_signature(target_index) =>
+            {
+                let sync_sql = drop_index_sql(target, table_name, target_index).and_then(|drop| {
+                    source_index
+                        .definition
+                        .as_ref()
+                        .map(|create| format!("{drop}\n{create}"))
+                });
+                diffs.push(index_diff(
+                    table_name,
+                    &name,
+                    "modified",
+                    Some(source_index),
+                    Some(target_index),
+                    sync_sql,
+                    "medium",
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn index_diff(
+    table_name: &str,
+    name: &str,
+    diff_type: &str,
+    source: Option<&IndexMeta>,
+    target: Option<&IndexMeta>,
+    sync_sql: Option<String>,
+    risk_level: &str,
+) -> SchemaDiff {
+    SchemaDiff {
+        object_type: "index".into(),
+        table_name: table_name.into(),
+        column_name: Some(name.into()),
+        diff_type: diff_type.into(),
+        source_value: source.map(index_signature),
+        target_value: target.map(index_signature),
+        sync_sql,
+        risk_level: risk_level.into(),
+    }
+}
+
+fn index_signature(index: &IndexMeta) -> String {
+    if let Some(definition) = &index.definition {
+        return normalize_ddl(definition);
+    }
+    format!(
+        "{} ({})",
+        if index.unique { "UNIQUE" } else { "INDEX" },
+        index.columns.join(", ")
+    )
+}
+
+fn drop_index_sql(
+    connection: &DbConnection,
+    table_name: &str,
+    index: &IndexMeta,
+) -> Option<String> {
+    if connection.db_type == "sqlite" && index.definition.is_none() {
+        return None;
+    }
+    Some(if connection.db_type == "mysql" {
+        format!(
+            "DROP INDEX {} ON {};",
+            db::quote_identifier(connection, &index.name),
+            db::quote_identifier(connection, table_name)
+        )
+    } else {
+        format!(
+            "DROP INDEX {};",
+            db::quote_identifier(connection, &index.name)
+        )
+    })
+}
+
+fn compare_foreign_keys(
+    target: &DbConnection,
+    table_name: &str,
+    source_keys: Vec<ForeignKeyMeta>,
+    target_keys: Vec<ForeignKeyMeta>,
+    diffs: &mut Vec<SchemaDiff>,
+) {
+    let source = source_keys
+        .into_iter()
+        .map(|key| (key.name.clone(), key))
+        .collect::<HashMap<_, _>>();
+    let target_keys = target_keys
+        .into_iter()
+        .map(|key| (key.name.clone(), key))
+        .collect::<HashMap<_, _>>();
+    let names = source
+        .keys()
+        .chain(target_keys.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for name in names {
+        match (source.get(&name), target_keys.get(&name)) {
+            (Some(source_key), None) => diffs.push(foreign_key_diff(
+                table_name,
+                &name,
+                "added",
+                Some(source_key),
+                None,
+                add_foreign_key_sql(target, table_name, source_key),
+            )),
+            (None, Some(target_key)) => diffs.push(foreign_key_diff(
+                table_name,
+                &name,
+                "removed",
+                None,
+                Some(target_key),
+                drop_foreign_key_sql(target, table_name, target_key),
+            )),
+            (Some(source_key), Some(target_key))
+                if foreign_key_signature(source_key) != foreign_key_signature(target_key) =>
+            {
+                let sync_sql =
+                    drop_foreign_key_sql(target, table_name, target_key).and_then(|drop| {
+                        add_foreign_key_sql(target, table_name, source_key)
+                            .map(|add| format!("{drop}\n{add}"))
+                    });
+                diffs.push(foreign_key_diff(
+                    table_name,
+                    &name,
+                    "modified",
+                    Some(source_key),
+                    Some(target_key),
+                    sync_sql,
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn foreign_key_diff(
+    table_name: &str,
+    name: &str,
+    diff_type: &str,
+    source: Option<&ForeignKeyMeta>,
+    target: Option<&ForeignKeyMeta>,
+    sync_sql: Option<String>,
+) -> SchemaDiff {
+    SchemaDiff {
+        object_type: "foreignKey".into(),
+        table_name: table_name.into(),
+        column_name: Some(name.into()),
+        diff_type: diff_type.into(),
+        source_value: source.map(foreign_key_signature),
+        target_value: target.map(foreign_key_signature),
+        sync_sql,
+        risk_level: "high".into(),
+    }
+}
+
+fn foreign_key_signature(key: &ForeignKeyMeta) -> String {
+    format!(
+        "FOREIGN KEY ({}) REFERENCES {} ({}) ON UPDATE {} ON DELETE {}",
+        key.columns.join(", "),
+        key.referenced_table,
+        key.referenced_columns.join(", "),
+        key.on_update.as_deref().unwrap_or("NO ACTION"),
+        key.on_delete.as_deref().unwrap_or("NO ACTION")
+    )
+}
+
+fn add_foreign_key_sql(
+    connection: &DbConnection,
+    table_name: &str,
+    key: &ForeignKeyMeta,
+) -> Option<String> {
+    if connection.db_type == "sqlite" {
+        return None;
+    }
+    let columns = key
+        .columns
+        .iter()
+        .map(|column| db::quote_identifier(connection, column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let referenced_columns = key
+        .referenced_columns
+        .iter()
+        .map(|column| db::quote_identifier(connection, column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}) ON UPDATE {} ON DELETE {};",
+        db::quote_identifier(connection, table_name),
+        db::quote_identifier(connection, &key.name),
+        columns,
+        db::quote_identifier(connection, &key.referenced_table),
+        referenced_columns,
+        key.on_update.as_deref().unwrap_or("NO ACTION"),
+        key.on_delete.as_deref().unwrap_or("NO ACTION")
+    ))
+}
+
+fn drop_foreign_key_sql(
+    connection: &DbConnection,
+    table_name: &str,
+    key: &ForeignKeyMeta,
+) -> Option<String> {
+    if connection.db_type == "sqlite" {
+        return None;
+    }
+    Some(format!(
+        "ALTER TABLE {} DROP {} {};",
+        db::quote_identifier(connection, table_name),
+        if connection.db_type == "mysql" {
+            "FOREIGN KEY"
+        } else {
+            "CONSTRAINT"
+        },
+        db::quote_identifier(connection, &key.name)
+    ))
 }
 
 fn compare_table_comment(
