@@ -303,6 +303,7 @@ export function DataSyncPage({
               sourceConnectionId: values.sourceConnectionId,
               targetConnectionId: values.targetConnectionId,
               tableNames: selectedTables.map(String),
+              allowDelete: Boolean(values.allowDelete),
             });
           }}
           onValuesChange={(_, values) => {
@@ -331,6 +332,14 @@ export function DataSyncPage({
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item name="allowDelete" valuePropName="checked">
+            <Checkbox>
+              <Space size={6}>
+                <Typography.Text>{t("data.allowDelete")}</Typography.Text>
+                <Typography.Text type="danger">{t("data.allowDeleteHint")}</Typography.Text>
+              </Space>
+            </Checkbox>
+          </Form.Item>
           <Form.Item label={t("schema.tables")} tooltip={t("schema.tablesTooltip")}>
             {rows.length > 0 ? (
               <div>

@@ -117,6 +117,7 @@ export type DataCompareBatchRequest = {
   sourceConnectionId: string;
   targetConnectionId: string;
   tableNames: string[];
+  allowDelete: boolean;
 };
 
 export type DataSyncRequest = {

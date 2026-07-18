@@ -273,7 +273,7 @@ function App() {
               sourceConnectionId: values.sourceConnectionId,
               targetConnectionId: values.targetConnectionId,
               tableName,
-              allowDelete: true,
+              allowDelete: values.allowDelete,
               createdAt: now(),
             })
             .then((run) => ({ tableName, run }))
