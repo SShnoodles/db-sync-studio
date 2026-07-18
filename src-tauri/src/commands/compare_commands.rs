@@ -7,7 +7,8 @@ use uuid::Uuid;
 use crate::{
     db::{
         self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRun, DataCompareRequest,
-        DataCompareRun, DataSyncRequest, DataSyncResult, SchemaSyncRequest, SchemaSyncResult,
+        DataCompareRun, DataSyncRequest, DataSyncResult, ExecutionHistoryRun, ExecutionSummary,
+        SchemaSyncRequest, SchemaSyncResult,
     },
     diff,
     storage::LocalStore,
@@ -118,9 +119,7 @@ pub fn run_schema_compare(
         sync_sql,
         created_at: Utc::now().to_rfc3339(),
     };
-    if has_schema_sync_sql(&run.diffs) {
-        store.save_history(&run)?;
-    }
+    store.save_history(&run)?;
     Ok(run)
 }
 
@@ -153,9 +152,7 @@ pub fn run_schema_compare_once(
         sync_sql,
         created_at,
     };
-    if has_schema_sync_sql(&run.diffs) {
-        store.save_history(&run)?;
-    }
+    store.save_history(&run)?;
     Ok(run)
 }
 
@@ -166,7 +163,19 @@ pub fn run_schema_sync(
 ) -> Result<SchemaSyncResult, String> {
     request.validate()?;
     let target = store.get_connection(&request.target_connection_id)?;
-    db::execute_schema_sql(&target, &request.sql)
+    let result = db::execute_schema_sql(&target, &request.sql);
+    save_execution_audit(
+        &store,
+        "schema",
+        &target,
+        &request.target_connection_id,
+        &request.sql,
+        result
+            .as_ref()
+            .map(|result| (result.executed, result.skipped))
+            .map_err(|error| error.clone()),
+    )?;
+    result
 }
 
 #[tauri::command]
@@ -280,7 +289,56 @@ pub fn run_data_sync(
 ) -> Result<DataSyncResult, String> {
     request.validate()?;
     let target = store.get_connection(&request.target_connection_id)?;
-    db::execute_data_sql(&target, &request.sql)
+    let result = db::execute_data_sql(&target, &request.sql);
+    save_execution_audit(
+        &store,
+        "data",
+        &target,
+        &request.target_connection_id,
+        &request.sql,
+        result
+            .as_ref()
+            .map(|result| (result.executed, result.skipped))
+            .map_err(Clone::clone),
+    )?;
+    result
+}
+
+fn save_execution_audit(
+    store: &LocalStore,
+    sync_type: &str,
+    target: &db::DbConnection,
+    target_connection_id: &str,
+    sql: &str,
+    result: Result<(usize, usize), String>,
+) -> Result<(), String> {
+    let created_at = Utc::now().to_rfc3339();
+    let (executed, skipped, status, error) = match result {
+        Ok((executed, skipped)) => (executed, skipped, "success", None),
+        Err(error) => (0, 0, "failed", Some(error)),
+    };
+    let target_name = format!("{} ({})", target.name, target.database);
+    let run = ExecutionHistoryRun {
+        run_type: "execution".into(),
+        sync_type: sync_type.into(),
+        id: Uuid::new_v4().to_string(),
+        db_type: Some(target.db_type.clone()),
+        title: format!("{} sync -> {} @ {}", sync_type, target_name, created_at),
+        source_name: String::new(),
+        target_name,
+        target_connection_id: target_connection_id.into(),
+        status: status.into(),
+        summary: ExecutionSummary {
+            statements: db::sql_statement_count(sql),
+            executed,
+            skipped,
+            status: status.into(),
+        },
+        error,
+        sync_sql: sql.into(),
+        created_at,
+    };
+    store.save_execution_history(&run)
 }
 
 fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {
@@ -377,14 +435,6 @@ fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
-}
-
-fn has_schema_sync_sql(diffs: &[db::SchemaDiff]) -> bool {
-    diffs.iter().any(|diff| {
-        diff.sync_sql
-            .as_deref()
-            .is_some_and(|sql| !sql.trim().is_empty())
-    })
 }
 
 fn schema_object_order(object_type: &str) -> u8 {

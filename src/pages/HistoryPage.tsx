@@ -4,7 +4,7 @@ import type { TableColumnsType } from "antd";
 
 import { DiffTable, SummaryStats } from "../components/schemaCompare";
 import { useI18n } from "../i18n";
-import type { DataCompareRun, HistoryFilter, HistoryRun } from "../types";
+import type { CompareRun, DataCompareRun, HistoryFilter, HistoryRun } from "../types";
 import { formatDate } from "../utils/format";
 
 type HistoryTypeFilter = "all" | "schema" | "data";
@@ -221,9 +221,12 @@ export function HistoryPage({
                       checked={selectedIds.includes(run.id)}
                       onChange={(event) => toggleOne(run.id, event.target.checked)}
                     />
-                    <span>{isDataHistory(run) ? run.title : run.taskName}</span>
-                    <Tag color={isDataHistory(run) ? "purple" : "blue"}>
-                      {isDataHistory(run) ? t("menu.dataSync") : t("menu.schemaSync")}
+                    <span>{historyTitle(run)}</span>
+                    <Tag color={isExecutionHistory(run) ? (run.status === "success" ? "green" : "red") : isDataHistory(run) ? "purple" : "blue"}>
+                      {isExecutionHistory(run) ? t("history.execution") : t("history.comparison")}
+                    </Tag>
+                    <Tag color={historySyncType(run) === "data" ? "purple" : "blue"}>
+                      {historySyncType(run) === "data" ? t("menu.dataSync") : t("menu.schemaSync")}
                     </Tag>
                     {run.dbType && <Tag color="geekblue">{dbTypeLabel(run.dbType)}</Tag>}
                   </Space>
@@ -253,20 +256,24 @@ export function HistoryPage({
                   items={[
                     { key: "time", label: t("common.time"), children: formatDate(run.createdAt) },
                     { key: "dbType", label: t("history.databaseType"), children: run.dbType ? dbTypeLabel(run.dbType) : "-" },
-                    { key: "source", label: t("common.source"), children: run.sourceName },
+                    { key: "source", label: t("common.source"), children: run.sourceName || "-" },
                     { key: "target", label: t("common.target"), children: run.targetName },
                   ]}
                 />
-                {isDataHistory(run) ? (
+                {isExecutionHistory(run) ? (
+                  <ExecutionHistoryStats run={run} />
+                ) : isDataHistory(run) ? (
                   <DataHistoryStats run={run} />
                 ) : (
                   <SummaryStats summary={run.summary} />
                 )}
                 {expandedIds.includes(run.id) && details[run.id] && (
-                  isDataHistory(details[run.id]) ? (
+                  isExecutionHistory(details[run.id]) ? (
+                    <ExecutionHistoryDetail run={details[run.id] as Extract<HistoryRun, { runType: "execution" }>} />
+                  ) : isDataHistory(details[run.id]) ? (
                     <DataHistoryDetail run={details[run.id] as Extract<HistoryRun, { runType: "data" }>} />
                   ) : (
-                    <DiffTable diffs={(details[run.id] as Exclude<HistoryRun, { runType: "data" }>).diffs} compact />
+                    <DiffTable diffs={(details[run.id] as CompareRun).diffs} compact />
                   )
                 )}
               </Card>
@@ -300,6 +307,54 @@ function dbTypeLabel(dbType: string) {
 
 function isDataHistory(run: HistoryRun): run is Extract<HistoryRun, { runType: "data" }> {
   return "runType" in run && run.runType === "data";
+}
+
+function isExecutionHistory(run: HistoryRun): run is Extract<HistoryRun, { runType: "execution" }> {
+  return "runType" in run && run.runType === "execution";
+}
+
+function historyTitle(run: HistoryRun) {
+  if (isExecutionHistory(run) || isDataHistory(run)) return run.title;
+  return run.taskName;
+}
+
+function historySyncType(run: HistoryRun) {
+  if (isExecutionHistory(run)) return run.syncType;
+  return isDataHistory(run) ? "data" : "schema";
+}
+
+function ExecutionHistoryStats({ run }: { run: Extract<HistoryRun, { runType: "execution" }> }) {
+  const { t } = useI18n();
+  return (
+    <Row gutter={[8, 8]} className="summary-stats">
+      <Col xs={12} md={6}>
+        <Statistic title={t("history.status")} value={run.status === "success" ? t("history.success") : t("history.failed")} />
+      </Col>
+      <Col xs={12} md={6}>
+        <Statistic title={t("history.statements")} value={run.summary.statements} />
+      </Col>
+      <Col xs={12} md={6}>
+        <Statistic title={t("history.executed")} value={run.summary.executed} />
+      </Col>
+      <Col xs={12} md={6}>
+        <Statistic title={t("history.skipped")} value={run.summary.skipped} />
+      </Col>
+    </Row>
+  );
+}
+
+function ExecutionHistoryDetail({ run }: { run: Extract<HistoryRun, { runType: "execution" }> }) {
+  const { t } = useI18n();
+  return (
+    <Descriptions
+      size="small"
+      column={1}
+      items={[
+        { key: "status", label: t("history.status"), children: run.status === "success" ? t("history.success") : t("history.failed") },
+        { key: "error", label: t("history.error"), children: run.error ? <Typography.Text type="danger">{run.error}</Typography.Text> : "-" },
+      ]}
+    />
+  );
 }
 
 function DataHistoryStats({ run }: { run: Extract<HistoryRun, { runType: "data" }> }) {

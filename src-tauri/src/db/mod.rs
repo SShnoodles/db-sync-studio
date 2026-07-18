@@ -297,6 +297,33 @@ pub struct DataSyncResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExecutionSummary {
+    pub statements: usize,
+    pub executed: usize,
+    pub skipped: usize,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionHistoryRun {
+    pub run_type: String,
+    pub sync_type: String,
+    pub id: String,
+    pub db_type: Option<String>,
+    pub title: String,
+    pub source_name: String,
+    pub target_name: String,
+    pub target_connection_id: String,
+    pub status: String,
+    pub summary: ExecutionSummary,
+    pub error: Option<String>,
+    pub sync_sql: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompareTask {
     pub id: String,
     pub name: String,
@@ -408,6 +435,13 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         statements.push(trailing.to_string());
     }
     statements
+}
+
+pub fn sql_statement_count(sql: &str) -> usize {
+    split_sql_statements(sql)
+        .into_iter()
+        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
+        .count()
 }
 
 fn execute_sql(connection: &DbConnection, sql: &str, transactional: bool) -> Result<usize, String> {

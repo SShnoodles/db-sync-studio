@@ -81,7 +81,7 @@ export type SchemaSyncResult = {
   skipped: number;
 };
 
-export type HistoryRun = CompareRun | DataCompareHistoryRun;
+export type HistoryRun = CompareRun | DataCompareHistoryRun | ExecutionHistoryRun;
 
 export type HistoryFilter = {
   syncType?: "all" | "schema" | "data";
@@ -190,6 +190,27 @@ export type DataCompareHistoryRun = {
   targetName: string;
   summary: DataCompareHistorySummary;
   runs: DataCompareRun[];
+  syncSql: string;
+  createdAt: string;
+};
+
+export type ExecutionHistoryRun = {
+  runType: "execution";
+  syncType: "schema" | "data";
+  id: string;
+  dbType?: DbConnection["dbType"];
+  title: string;
+  sourceName: string;
+  targetName: string;
+  targetConnectionId: string;
+  status: "success" | "failed" | "unknown";
+  summary: {
+    statements: number;
+    executed: number;
+    skipped: number;
+    status: string;
+  };
+  error?: string;
   syncSql: string;
   createdAt: string;
 };

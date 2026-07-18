@@ -1,6 +1,6 @@
 use crate::{
     credential,
-    db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection},
+    db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection, ExecutionHistoryRun},
 };
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,10 @@ fn ensure_compare_history_columns(connection: &Connection) -> Result<(), String>
             "ALTER TABLE compare_history ADD COLUMN db_type TEXT",
         ),
         (
+            "record_kind",
+            "ALTER TABLE compare_history ADD COLUMN record_kind TEXT NOT NULL DEFAULT 'compare'",
+        ),
+        (
             "source_name",
             "ALTER TABLE compare_history ADD COLUMN source_name TEXT",
         ),
@@ -79,6 +83,7 @@ fn ensure_compare_history_columns(connection: &Connection) -> Result<(), String>
         .execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_compare_history_created_at ON compare_history(created_at DESC);
              CREATE INDEX IF NOT EXISTS idx_compare_history_sync_type ON compare_history(sync_type);
+             CREATE INDEX IF NOT EXISTS idx_compare_history_record_kind ON compare_history(record_kind);
              CREATE INDEX IF NOT EXISTS idx_compare_history_db_type ON compare_history(db_type);
              CREATE INDEX IF NOT EXISTS idx_compare_history_source_name ON compare_history(source_name);
              CREATE INDEX IF NOT EXISTS idx_compare_history_target_name ON compare_history(target_name);
@@ -198,6 +203,7 @@ impl LocalStore {
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
                 sync_type TEXT NOT NULL DEFAULT 'schema',
+                record_kind TEXT NOT NULL DEFAULT 'compare',
                 db_type TEXT,
                 source_name TEXT,
                 target_name TEXT,
@@ -423,6 +429,36 @@ impl LocalStore {
         Ok(())
     }
 
+    pub fn save_execution_history(&self, run: &ExecutionHistoryRun) -> Result<(), String> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Storage lock failed".to_string())?;
+        let summary_json =
+            serde_json::to_string(&run.summary).map_err(|error| error.to_string())?;
+        let result_json = serde_json::to_string(run).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO compare_history
+                 (id, task_id, sync_type, record_kind, db_type, source_name, target_name, title, result_summary_json, result_json, created_at)
+                 VALUES (?1, ?2, ?3, 'execution', ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    run.id,
+                    "execution",
+                    run.sync_type,
+                    run.db_type,
+                    run.source_name,
+                    run.target_name,
+                    run.title,
+                    summary_json,
+                    result_json,
+                    run.created_at
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub fn list_history(
         &self,
         sync_type: Option<String>,
@@ -465,7 +501,7 @@ impl LocalStore {
             .map_err(|error| error.to_string())? as usize;
         let mut statement = connection
             .prepare(
-                "SELECT sync_type, result_summary_json, id, db_type, source_name, target_name, title, created_at FROM compare_history
+                "SELECT sync_type, record_kind, result_summary_json, id, db_type, source_name, target_name, title, created_at FROM compare_history
                 WHERE (?1 IS NULL OR sync_type = ?1)
                 AND (?2 IS NULL OR created_at >= ?2)
                 AND (?3 IS NULL OR created_at <= ?3)
@@ -495,11 +531,12 @@ impl LocalStore {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<String>>(6)?,
-                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, String>(8)?,
                     ))
                 },
             )
@@ -508,6 +545,7 @@ impl LocalStore {
                 item.map_err(|error| error.to_string()).and_then(
                     |(
                         sync_type,
+                        record_kind,
                         summary_json,
                         id,
                         db_type,
@@ -518,6 +556,7 @@ impl LocalStore {
                     )| {
                         history_summary_value(
                             &sync_type,
+                            &record_kind,
                             &summary_json,
                             HistorySummaryFields {
                                 id,
@@ -571,14 +610,14 @@ impl LocalStore {
             .connection
             .lock()
             .map_err(|_| "Storage lock failed".to_string())?;
-        let (sync_type, json): (String, String) = connection
+        let (sync_type, record_kind, json): (String, String, String) = connection
             .query_row(
-                "SELECT sync_type, result_json FROM compare_history WHERE id = ?1",
+                "SELECT sync_type, record_kind, result_json FROM compare_history WHERE id = ?1",
                 [id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|_| "Comparison history was not found".to_string())?;
-        if sync_type == "data" {
+        if record_kind != "execution" && sync_type == "data" {
             return slim_data_history_value(&json);
         }
         serde_json::from_str(&json).map_err(|error| error.to_string())
@@ -657,6 +696,7 @@ struct HistorySummaryFields {
 
 fn history_summary_value(
     sync_type: &str,
+    record_kind: &str,
     summary_json: &str,
     fields: HistorySummaryFields,
 ) -> Result<Value, String> {
@@ -677,7 +717,21 @@ fn history_summary_value(
     item.insert("syncSql".into(), Value::String(String::new()));
     item.insert("createdAt".into(), Value::String(fields.created_at));
 
-    if sync_type == "data" {
+    if record_kind == "execution" {
+        item.insert("runType".into(), Value::String("execution".into()));
+        item.insert("syncType".into(), Value::String(sync_type.into()));
+        if let Some(value) = fields.title {
+            item.insert("title".into(), Value::String(value));
+        }
+        let status = item
+            .get("summary")
+            .and_then(|summary| summary.get("status"))
+            .cloned()
+            .unwrap_or_else(|| Value::String("unknown".into()));
+        item.insert("status".into(), status);
+        item.insert("targetConnectionId".into(), Value::String(String::new()));
+        item.insert("error".into(), Value::Null);
+    } else if sync_type == "data" {
         item.insert("runType".into(), Value::String("data".into()));
         if let Some(value) = fields.title {
             item.insert("title".into(), Value::String(value));
@@ -777,4 +831,61 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
         value.push(character);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::ExecutionSummary;
+    use uuid::Uuid;
+
+    #[test]
+    fn execution_history_can_be_listed_and_loaded() {
+        let path = std::env::temp_dir().join(format!(
+            "db-sync-studio-execution-history-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let store = LocalStore::open(&path).expect("open local store");
+        let run = ExecutionHistoryRun {
+            run_type: "execution".into(),
+            sync_type: "data".into(),
+            id: "execution-audit".into(),
+            db_type: Some("sqlite".into()),
+            title: "data sync".into(),
+            source_name: String::new(),
+            target_name: "target.sqlite".into(),
+            target_connection_id: "target".into(),
+            status: "failed".into(),
+            summary: ExecutionSummary {
+                statements: 2,
+                executed: 0,
+                skipped: 0,
+                status: "failed".into(),
+            },
+            error: Some("constraint failed".into()),
+            sync_sql: "INSERT INTO items VALUES (1);\nINSERT INTO items VALUES (1);".into(),
+            created_at: "2026-07-15T00:00:00Z".into(),
+        };
+
+        store
+            .save_execution_history(&run)
+            .expect("save execution history");
+        let (items, total) = store
+            .list_history(None, None, None, None, None, 1, 10)
+            .expect("list execution history");
+        assert_eq!(total, 1);
+        assert_eq!(items[0]["runType"], "execution");
+        assert_eq!(items[0]["syncType"], "data");
+        assert_eq!(items[0]["status"], "failed");
+        assert_eq!(items[0]["summary"]["statements"], 2);
+
+        let detail = store
+            .get_history("execution-audit")
+            .expect("load execution history");
+        assert_eq!(detail["error"], "constraint failed");
+        assert_eq!(detail["syncSql"], run.sync_sql);
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
 }
