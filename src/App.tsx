@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, ConfigProvider, Form, Layout, Menu, Modal, message, theme as antdTheme } from "antd";
 import type { MenuProps } from "antd";
 import { ApiOutlined, DatabaseOutlined, HistoryOutlined, SettingOutlined, SwapOutlined, TableOutlined } from "@ant-design/icons";
@@ -34,6 +34,9 @@ type DataProgress = {
   finishedAt?: number;
   status?: "normal" | "active" | "success" | "exception";
 };
+type CooperativeCancellation = { cancelled: boolean };
+
+const DATA_COMPARE_CONCURRENCY = 3;
 
 function initialThemeMode(): ThemeMode {
   return localStorage.getItem("db-sync-studio.theme") === "dark" ? "dark" : "light";
@@ -60,6 +63,7 @@ function App() {
   const [loadingDataTables, setLoadingDataTables] = useState(false);
   const [runningCompare, setRunningCompare] = useState(false);
   const [runningDataCompare, setRunningDataCompare] = useState(false);
+  const [dataCompareCancelRequested, setDataCompareCancelRequested] = useState(false);
   const [syncingSchema, setSyncingSchema] = useState(false);
   const [syncingData, setSyncingData] = useState(false);
   const [schemaProgress, setSchemaProgress] = useState<SchemaProgress>();
@@ -68,6 +72,7 @@ function App() {
   const [taskForm] = Form.useForm<CompareTask>();
   const [dataForm] = Form.useForm<DataCompareRequest>();
   const [messageApi, contextHolder] = message.useMessage();
+  const dataCompareCancellationRef = useRef<CooperativeCancellation | undefined>(undefined);
   const menuItems: MenuProps["items"] = [
     { key: "overview", icon: <ApiOutlined />, label: t("menu.overview") },
     { key: "connections", icon: <DatabaseOutlined />, label: t("menu.connections") },
@@ -261,13 +266,19 @@ function App() {
   };
 
   const runDataCompare = async (values: DataCompareBatchRequest) => {
+    const cancellation = { cancelled: false };
+    dataCompareCancellationRef.current = cancellation;
     try {
       setRunningDataCompare(true);
+      setDataCompareCancelRequested(false);
       const startedAt = Date.now();
       setDataProgress({ kind: "compare", completed: 0, total: values.tableNames.length, startedAt, status: "active" });
-      const results = await Promise.all(
-        values.tableNames.map((tableName) =>
-          dbSyncApi
+      const results = await mapWithConcurrency(
+        values.tableNames,
+        DATA_COMPARE_CONCURRENCY,
+        cancellation,
+        async (tableName) => {
+          const result = await dbSyncApi
             .runDataCompare({
               id: crypto.randomUUID(),
               sourceConnectionId: values.sourceConnectionId,
@@ -277,18 +288,17 @@ function App() {
               createdAt: now(),
             })
             .then((run) => ({ tableName, run }))
-            .catch((error) => ({ tableName, error: String(error) }))
-            .finally(() =>
-              setDataProgress((current) => ({
-                kind: "compare",
-                status: "active",
-                total: values.tableNames.length,
-                startedAt,
-                ...current,
-                completed: Math.min((current?.completed ?? 0) + 1, current?.total ?? values.tableNames.length),
-              })),
-            ),
-        ),
+            .catch((error) => ({ tableName, error: String(error) }));
+          setDataProgress((current) => ({
+            ...current,
+            kind: "compare",
+            status: cancellation.cancelled ? "normal" : "active",
+            total: values.tableNames.length,
+            startedAt,
+            completed: Math.min((current?.completed ?? 0) + 1, current?.total ?? values.tableNames.length),
+          }));
+          return result;
+        },
       );
       const runs = results.flatMap((result) => ("run" in result ? [result.run] : []));
       const errors = results.flatMap((result) => ("error" in result ? [`${result.tableName}: ${result.error}`] : []));
@@ -299,8 +309,19 @@ function App() {
         await loadHistory(historyFilter, historyPage);
         await loadHistoryCounts();
       }
-      setDataProgress({ kind: "compare", completed: values.tableNames.length, total: values.tableNames.length, startedAt, finishedAt: Date.now(), status: "success" });
-      messageApi.success(t("messages.dataCompareCompleted", { count: diffCount }));
+      setDataProgress((current) => ({
+        kind: "compare",
+        completed: current?.completed ?? results.length,
+        total: values.tableNames.length,
+        startedAt,
+        finishedAt: Date.now(),
+        status: cancellation.cancelled ? "normal" : "success",
+      }));
+      if (cancellation.cancelled) {
+        messageApi.info(t("messages.dataCompareCancelled", { completed: results.length, total: values.tableNames.length }));
+      } else {
+        messageApi.success(t("messages.dataCompareCompleted", { count: diffCount }));
+      }
       if (errors.length > 0) {
         messageApi.error(errors.join("\n"));
       }
@@ -315,8 +336,20 @@ function App() {
       }));
       messageApi.error(String(error));
     } finally {
+      if (dataCompareCancellationRef.current === cancellation) {
+        dataCompareCancellationRef.current = undefined;
+      }
+      setDataCompareCancelRequested(false);
       setRunningDataCompare(false);
     }
+  };
+
+  const cancelDataCompare = () => {
+    const cancellation = dataCompareCancellationRef.current;
+    if (!cancellation || cancellation.cancelled) return;
+    cancellation.cancelled = true;
+    setDataCompareCancelRequested(true);
+    setDataProgress((current) => current ? { ...current, status: "normal" } : current);
   };
 
   const copySql = async (sql: string) => {
@@ -540,7 +573,9 @@ function App() {
                   runningCompare={runningDataCompare}
                   syncingData={syncingData}
                   progress={dataProgress}
+                  cancelRequested={dataCompareCancelRequested}
                   onRun={runDataCompare}
+                  onCancel={cancelDataCompare}
                   onCopySql={copySql}
                   onSyncSql={runDataSync}
                   onConnectionsChanged={(request) => void loadDataTables(request)}
@@ -613,6 +648,27 @@ function countSqlStatements(sql: string) {
     .split(";")
     .map((statement) => statement.replace(/--.*$/gm, "").trim())
     .filter(Boolean).length;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  cancellation: CooperativeCancellation,
+  mapper: (item: T) => Promise<R>,
+) {
+  const results: R[] = [];
+  let nextIndex = 0;
+  const worker = async () => {
+    while (!cancellation.cancelled) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index]);
+    }
+  };
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results.filter((result) => result !== undefined);
 }
 
 export default App;

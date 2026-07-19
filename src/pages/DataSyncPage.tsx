@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Card, Checkbox, Col, Form, Progress, Row, Select, Space, Table, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
-import { PlayCircleOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, StopOutlined } from "@ant-design/icons";
 
 import { SqlCodePreview } from "../components/SqlCodePreview";
 import { useI18n } from "../i18n";
@@ -38,7 +38,9 @@ export function DataSyncPage({
   runningCompare,
   syncingData,
   progress,
+  cancelRequested,
   onRun,
+  onCancel,
   onCopySql,
   onSyncSql,
   onConnectionsChanged,
@@ -58,7 +60,9 @@ export function DataSyncPage({
     finishedAt?: number;
     status?: "normal" | "active" | "success" | "exception";
   };
+  cancelRequested: boolean;
   onRun: (values: DataCompareBatchRequest) => void;
+  onCancel: () => void;
   onCopySql: (sql: string) => void;
   onSyncSql: (sql: string) => void;
   onConnectionsChanged: (request: Partial<DataCompareRequest>) => void;
@@ -364,6 +368,17 @@ export function DataSyncPage({
                     >
                       {t("data.run")}
                     </Button>
+                    {runningCompare && (
+                      <Button
+                        size="small"
+                        danger
+                        icon={<StopOutlined />}
+                        disabled={cancelRequested}
+                        onClick={onCancel}
+                      >
+                        {cancelRequested ? t("data.cancelling") : t("common.cancel")}
+                      </Button>
+                    )}
                   </Space>
                 </div>
                 <Table
@@ -399,6 +414,17 @@ export function DataSyncPage({
                 >
                   {t("data.run")}
                 </Button>
+                {runningCompare && (
+                  <Button
+                    size="small"
+                    danger
+                    icon={<StopOutlined />}
+                    disabled={cancelRequested}
+                    onClick={onCancel}
+                  >
+                    {cancelRequested ? t("data.cancelling") : t("common.cancel")}
+                  </Button>
+                )}
               </div>
             )}
           </Form.Item>
