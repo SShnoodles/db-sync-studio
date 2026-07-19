@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRun, DataCompareRequest,
-        DataCompareRun, DataSyncRequest, DataSyncResult, ExecutionHistoryRun, ExecutionSummary,
-        SchemaSyncRequest, SchemaSyncResult,
+        self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRequest,
+        DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult,
+        ExecutionHistoryRun, ExecutionSummary, SchemaSyncRequest, SchemaSyncResult,
     },
     diff,
     storage::LocalStore,
@@ -108,9 +108,9 @@ pub fn run_schema_compare(
     let diffs = diff::compare_schema(&source, &target, &task.selected_tables)?;
     let sync_sql = schema_sync_sql(&diffs);
     let run = CompareRun {
-        id: Uuid::new_v4().to_string(),
+        id: new_run_id(),
         db_type: Some(source.db_type.clone()),
-        task_id: task.id.clone(),
+        task_id: Some(task.id.clone()),
         task_name: task.name.clone(),
         source_name: source.name,
         target_name: target.name,
@@ -138,12 +138,9 @@ pub fn run_schema_compare_once(
     let source_label = format!("{} ({})", source.name, source.database);
     let target_label = format!("{} ({})", target.name, target.database);
     let run = CompareRun {
-        id: format!(
-            "{} -> {} @ {}",
-            source.database, target.database, created_at
-        ),
+        id: new_run_id(),
         db_type: Some(source.db_type.clone()),
-        task_id: task.id,
+        task_id: None,
         task_name: format!("{source_label} -> {target_label} @ {created_at}"),
         source_name: source_label,
         target_name: target_label,
@@ -232,9 +229,21 @@ pub fn get_compare_history_counts(store: State<'_, LocalStore>) -> Result<Value,
 
 #[tauri::command]
 pub fn save_data_compare_history(
-    run: DataCompareHistoryRun,
+    request: DataCompareHistoryRequest,
     store: State<'_, LocalStore>,
 ) -> Result<DataCompareHistoryRun, String> {
+    let run = DataCompareHistoryRun {
+        run_type: "data".into(),
+        id: new_run_id(),
+        db_type: request.db_type,
+        title: request.title,
+        source_name: request.source_name,
+        target_name: request.target_name,
+        summary: request.summary,
+        runs: request.runs,
+        sync_sql: request.sync_sql,
+        created_at: request.created_at,
+    };
     store.save_data_history(&run)?;
     Ok(run)
 }
@@ -266,10 +275,7 @@ pub fn run_data_compare(
     let sync_sql = data_sync_sql(&diffs);
     let created_at = Utc::now().to_rfc3339();
     Ok(DataCompareRun {
-        id: format!(
-            "{} -> {}.{} @ {}",
-            source.database, target.database, request.table_name, created_at
-        ),
+        id: new_run_id(),
         db_type: Some(source.db_type.clone()),
         table_name: request.table_name,
         source_name: format!("{} ({})", source.name, source.database),
@@ -321,7 +327,7 @@ fn save_execution_audit(
     let run = ExecutionHistoryRun {
         run_type: "execution".into(),
         sync_type: sync_type.into(),
-        id: Uuid::new_v4().to_string(),
+        id: new_run_id(),
         db_type: Some(target.db_type.clone()),
         title: format!("{} sync -> {} @ {}", sync_type, target_name, created_at),
         source_name: String::new(),
@@ -375,6 +381,10 @@ fn summarize(diffs: &[db::SchemaDiff]) -> CompareSummary {
             .filter(|diff| diff.risk_level == "high")
             .count(),
     }
+}
+
+fn new_run_id() -> String {
+    Uuid::new_v4().to_string()
 }
 
 fn schema_sync_sql(diffs: &[db::SchemaDiff]) -> String {

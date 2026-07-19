@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { CompareRun, CompareTask, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryPageResult, HistoryRun, SchemaSyncRequest, SchemaSyncResult, TableMeta } from "../types";
+import type { CompareRun, CompareTask, DataCompareHistoryRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryPageResult, HistoryRun, SchemaSyncRequest, SchemaSyncResult, TableMeta } from "../types";
 
 export const dbSyncApi = {
   listConnections: () => invoke<DbConnection[]>("list_connections"),
@@ -30,6 +30,6 @@ export const dbSyncApi = {
     invoke<DataCompareRun>("run_data_compare", { request }),
   runDataSync: (request: DataSyncRequest) =>
     invoke<DataSyncResult>("run_data_sync", { request }),
-  saveDataCompareHistory: (run: DataCompareHistoryRun) =>
-    invoke<DataCompareHistoryRun>("save_data_compare_history", { run }),
+  saveDataCompareHistory: (request: DataCompareHistoryRequest) =>
+    invoke<DataCompareHistoryRun>("save_data_compare_history", { request }),
 };

@@ -541,12 +541,10 @@ fn strip_sql_comments(sql: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataCompareRequest {
-    pub id: String,
     pub source_connection_id: String,
     pub target_connection_id: String,
     pub table_name: String,
     pub allow_delete: bool,
-    pub created_at: String,
 }
 
 impl DataCompareRequest {
@@ -648,6 +646,19 @@ pub struct DataCompareHistoryRun {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DataCompareHistoryRequest {
+    pub db_type: Option<String>,
+    pub title: String,
+    pub source_name: String,
+    pub target_name: String,
+    pub summary: DataCompareHistorySummary,
+    pub runs: Vec<DataCompareRun>,
+    pub sync_sql: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SchemaDiff {
     pub object_type: String,
     pub table_name: String,
@@ -679,7 +690,8 @@ pub struct CompareSummary {
 pub struct CompareRun {
     pub id: String,
     pub db_type: Option<String>,
-    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub task_name: String,
     pub source_name: String,
     pub target_name: String,

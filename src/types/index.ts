@@ -61,7 +61,7 @@ export type CompareSummary = {
 export type CompareRun = {
   id: string;
   dbType?: DbConnection["dbType"];
-  taskId: string;
+  taskId?: string;
   taskName: string;
   sourceName: string;
   targetName: string;
@@ -105,12 +105,10 @@ export type HistoryCounts = {
 };
 
 export type DataCompareRequest = {
-  id: string;
   sourceConnectionId: string;
   targetConnectionId: string;
   tableName: string;
   allowDelete: boolean;
-  createdAt: string;
 };
 
 export type DataCompareBatchRequest = {
@@ -193,6 +191,8 @@ export type DataCompareHistoryRun = {
   syncSql: string;
   createdAt: string;
 };
+
+export type DataCompareHistoryRequest = Omit<DataCompareHistoryRun, "runType" | "id">;
 
 export type ExecutionHistoryRun = {
   runType: "execution";

@@ -14,7 +14,7 @@ import { HistoryPage } from "./pages/HistoryPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
-import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryRun, Page } from "./types";
+import type { CompareRun, CompareTask, DataCompareBatchRequest, DataCompareHistoryRequest, DataCompareRequest, DataCompareRun, DataSyncTableMeta, DbConnection, HistoryCounts, HistoryFilter, HistoryRun, Page } from "./types";
 import { blankConnection, now } from "./utils/defaults";
 
 type ThemeMode = "light" | "dark";
@@ -280,12 +280,10 @@ function App() {
         async (tableName) => {
           const result = await dbSyncApi
             .runDataCompare({
-              id: crypto.randomUUID(),
               sourceConnectionId: values.sourceConnectionId,
               targetConnectionId: values.targetConnectionId,
               tableName,
               allowDelete: values.allowDelete,
-              createdAt: now(),
             })
             .then((run) => ({ tableName, run }))
             .catch((error) => ({ tableName, error: String(error) }));
@@ -615,12 +613,10 @@ function App() {
   );
 }
 
-function buildDataCompareHistory(runs: DataCompareRun[]): DataCompareHistoryRun {
+function buildDataCompareHistory(runs: DataCompareRun[]): DataCompareHistoryRequest {
   const createdAt = now();
   const firstRun = runs[0];
   return {
-    runType: "data",
-    id: `${firstRun.sourceName} -> ${firstRun.targetName} @ ${createdAt}`,
     dbType: firstRun.dbType,
     title: `${firstRun.sourceName} -> ${firstRun.targetName} @ ${createdAt}`,
     sourceName: firstRun.sourceName,

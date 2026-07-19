@@ -11,6 +11,45 @@ pub struct LocalStore {
     connection: Mutex<Connection>,
 }
 
+const CREATE_COMPARE_HISTORY_TABLE: &str = "CREATE TABLE IF NOT EXISTS compare_history (
+        id TEXT PRIMARY KEY,
+        task_id TEXT,
+        sync_type TEXT NOT NULL DEFAULT 'schema',
+        record_kind TEXT NOT NULL DEFAULT 'compare',
+        db_type TEXT,
+        source_name TEXT,
+        target_name TEXT,
+        title TEXT,
+        result_summary_json TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        report_path TEXT,
+        created_at TEXT NOT NULL
+    );";
+
+fn reset_legacy_compare_history(connection: &Connection) -> Result<(), String> {
+    let task_id_is_required = connection
+        .prepare("PRAGMA table_info(compare_history)")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .any(|(name, not_null)| name == "task_id" && not_null != 0);
+
+    if task_id_is_required {
+        connection
+            .execute_batch("DROP TABLE compare_history;")
+            .map_err(|error| error.to_string())?;
+        connection
+            .execute_batch(CREATE_COMPARE_HISTORY_TABLE)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn ensure_compare_history_sync_type(connection: &Connection) -> Result<(), String> {
     let has_column = connection
         .prepare("PRAGMA table_info(compare_history)")
@@ -198,23 +237,13 @@ impl LocalStore {
                 config_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS compare_history (
-                id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                sync_type TEXT NOT NULL DEFAULT 'schema',
-                record_kind TEXT NOT NULL DEFAULT 'compare',
-                db_type TEXT,
-                source_name TEXT,
-                target_name TEXT,
-                title TEXT,
-                result_summary_json TEXT NOT NULL,
-                result_json TEXT NOT NULL,
-                report_path TEXT,
-                created_at TEXT NOT NULL
             );",
             )
             .map_err(|error| error.to_string())?;
+        connection
+            .execute_batch(CREATE_COMPARE_HISTORY_TABLE)
+            .map_err(|error| error.to_string())?;
+        reset_legacy_compare_history(&connection)?;
         ensure_compare_history_columns(&connection)?;
         migrate_legacy_connection_passwords(&connection)?;
         Ok(Self {
@@ -414,7 +443,7 @@ impl LocalStore {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     run.id,
-                    run.run_type,
+                    Option::<String>::None,
                     "data",
                     run.db_type,
                     run.source_name,
@@ -444,7 +473,7 @@ impl LocalStore {
                  VALUES (?1, ?2, ?3, 'execution', ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     run.id,
-                    "execution",
+                    Option::<String>::None,
                     run.sync_type,
                     run.db_type,
                     run.source_name,
@@ -846,10 +875,11 @@ mod tests {
             Uuid::new_v4()
         ));
         let store = LocalStore::open(&path).expect("open local store");
+        let run_id = Uuid::new_v4().to_string();
         let run = ExecutionHistoryRun {
             run_type: "execution".into(),
             sync_type: "data".into(),
-            id: "execution-audit".into(),
+            id: run_id.clone(),
             db_type: Some("sqlite".into()),
             title: "data sync".into(),
             source_name: String::new(),
@@ -879,12 +909,68 @@ mod tests {
         assert_eq!(items[0]["status"], "failed");
         assert_eq!(items[0]["summary"]["statements"], 2);
 
-        let detail = store
-            .get_history("execution-audit")
-            .expect("load execution history");
+        let task_id = store
+            .connection
+            .lock()
+            .expect("lock local store")
+            .query_row(
+                "SELECT task_id FROM compare_history WHERE id = ?1",
+                [&run_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .expect("load execution task id");
+        assert!(task_id.is_none());
+        Uuid::parse_str(&run_id).expect("execution history id is a UUID");
+
+        let detail = store.get_history(&run_id).expect("load execution history");
         assert_eq!(detail["error"], "constraint failed");
         assert_eq!(detail["syncSql"], run.sync_sql);
 
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_history_schema_is_recreated_with_nullable_task_id() {
+        let path = std::env::temp_dir().join(format!(
+            "db-sync-studio-history-migration-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let legacy = Connection::open(&path).expect("open legacy store");
+        legacy
+            .execute_batch(
+                "CREATE TABLE compare_history (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL
+                );
+                INSERT INTO compare_history (id, task_id) VALUES ('legacy', 'data');",
+            )
+            .expect("create legacy history schema");
+        drop(legacy);
+
+        let store = LocalStore::open(&path).expect("migrate local store");
+        let connection = store.connection.lock().expect("lock local store");
+        let history_count = connection
+            .query_row("SELECT COUNT(*) FROM compare_history", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count migrated history");
+        let task_id_not_null = connection
+            .prepare("PRAGMA table_info(compare_history)")
+            .expect("read migrated schema")
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+            })
+            .expect("query migrated schema")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect migrated schema")
+            .into_iter()
+            .find_map(|(name, not_null)| (name == "task_id").then_some(not_null))
+            .expect("task_id column exists");
+        assert_eq!(history_count, 0);
+        assert_eq!(task_id_not_null, 0);
+
+        drop(connection);
         drop(store);
         let _ = std::fs::remove_file(path);
     }

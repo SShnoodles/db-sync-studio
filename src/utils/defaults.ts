@@ -29,10 +29,8 @@ export const blankTask = (): CompareTask => ({
 });
 
 export const blankDataCompare = (): DataCompareRequest => ({
-  id: crypto.randomUUID(),
   sourceConnectionId: "",
   targetConnectionId: "",
   tableName: "",
   allowDelete: false,
-  createdAt: now(),
 });
