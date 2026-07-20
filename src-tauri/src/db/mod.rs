@@ -335,6 +335,18 @@ pub struct CompareTask {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryQuery {
+    pub sync_type: Option<String>,
+    pub database_type: Option<String>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub search_content: Option<String>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
+}
+
 impl CompareTask {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {

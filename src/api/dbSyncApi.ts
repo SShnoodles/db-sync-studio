@@ -19,7 +19,7 @@ export const dbSyncApi = {
     invoke<CompareRun>("run_schema_compare_once", { task }),
   runSchemaSync: (request: SchemaSyncRequest) =>
     invoke<SchemaSyncResult>("run_schema_sync", { request }),
-  listCompareHistory: (filter: HistoryFilter = {}) => invoke<HistoryPageResult>("list_compare_history", filter),
+  listCompareHistory: (query: HistoryFilter = {}) => invoke<HistoryPageResult>("list_compare_history", { query }),
   getCompareHistory: (id: string) => invoke<HistoryRun>("get_compare_history", { id }),
   getCompareHistorySql: (id: string) => invoke<string>("get_compare_history_sql", { id }),
   getCompareHistoryCounts: () => invoke<HistoryCounts>("get_compare_history_counts"),

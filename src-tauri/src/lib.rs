@@ -16,7 +16,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let store = LocalStore::open(data_dir.join("db-sync-studio.sqlite"))
-                .map_err(|error| std::io::Error::other(error))?;
+                .map_err(std::io::Error::other)?;
             app.manage(store);
             Ok(())
         })

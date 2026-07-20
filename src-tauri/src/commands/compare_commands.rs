@@ -8,7 +8,7 @@ use crate::{
     db::{
         self, CompareRun, CompareSummary, CompareTask, DataCompareHistoryRequest,
         DataCompareHistoryRun, DataCompareRequest, DataCompareRun, DataSyncRequest, DataSyncResult,
-        ExecutionHistoryRun, ExecutionSummary, SchemaSyncRequest, SchemaSyncResult,
+        ExecutionHistoryRun, ExecutionSummary, HistoryQuery, SchemaSyncRequest, SchemaSyncResult,
     },
     diff,
     storage::LocalStore,
@@ -177,35 +177,22 @@ pub fn run_schema_sync(
 
 #[tauri::command]
 pub fn list_compare_history(
-    sync_type: Option<String>,
-    database_type: Option<String>,
-    start_time: Option<String>,
-    end_time: Option<String>,
-    search_content: Option<String>,
-    page: Option<usize>,
-    page_size: Option<usize>,
+    mut query: HistoryQuery,
     store: State<'_, LocalStore>,
 ) -> Result<Value, String> {
-    let sync_type = match sync_type.as_deref() {
-        Some("schema") | Some("data") => sync_type,
+    query.sync_type = match query.sync_type.as_deref() {
+        Some("schema") | Some("data") => query.sync_type,
         _ => None,
     };
-    let database_type = match database_type.as_deref() {
-        Some("mysql") | Some("postgresql") | Some("sqlite") => database_type,
+    query.database_type = match query.database_type.as_deref() {
+        Some("mysql") | Some("postgresql") | Some("sqlite") => query.database_type,
         _ => None,
     };
-    let search_content = search_content
+    query.search_content = query
+        .search_content
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let (items, total) = store.list_history(
-        sync_type,
-        database_type,
-        start_time,
-        end_time,
-        search_content,
-        page.unwrap_or(1),
-        page_size.unwrap_or(3),
-    )?;
+    let (items, total) = store.list_history(&query)?;
     Ok(serde_json::json!({
         "items": items,
         "total": total,

@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite --port 1420",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "check": "tsc --noEmit && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -1,6 +1,9 @@
 use crate::{
     credential,
-    db::{CompareRun, CompareTask, DataCompareHistoryRun, DbConnection, ExecutionHistoryRun},
+    db::{
+        CompareRun, CompareTask, DataCompareHistoryRun, DbConnection, ExecutionHistoryRun,
+        HistoryQuery,
+    },
 };
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -488,23 +491,17 @@ impl LocalStore {
         Ok(())
     }
 
-    pub fn list_history(
-        &self,
-        sync_type: Option<String>,
-        database_type: Option<String>,
-        start_time: Option<String>,
-        end_time: Option<String>,
-        search_content: Option<String>,
-        page: usize,
-        page_size: usize,
-    ) -> Result<(Vec<Value>, usize), String> {
+    pub fn list_history(&self, query: &HistoryQuery) -> Result<(Vec<Value>, usize), String> {
         let connection = self
             .connection
             .lock()
             .map_err(|_| "Storage lock failed".to_string())?;
-        let search_pattern = search_content.map(|value| format!("%{}%", escape_like(&value)));
-        let safe_page = page.max(1);
-        let safe_page_size = page_size.clamp(1, 100);
+        let search_pattern = query
+            .search_content
+            .as_deref()
+            .map(|value| format!("%{}%", escape_like(value)));
+        let safe_page = query.page.unwrap_or(1).max(1);
+        let safe_page_size = query.page_size.unwrap_or(3).clamp(1, 100);
         let offset = (safe_page - 1) * safe_page_size;
         let total = connection
             .query_row(
@@ -519,10 +516,10 @@ impl LocalStore {
                     OR target_name LIKE ?5 ESCAPE '\\'
                     OR db_type LIKE ?5 ESCAPE '\\')",
                 params![
-                    sync_type,
-                    start_time,
-                    end_time,
-                    database_type,
+                    query.sync_type,
+                    query.start_time,
+                    query.end_time,
+                    query.database_type,
                     search_pattern
                 ],
                 |row| row.get::<_, i64>(0),
@@ -547,10 +544,10 @@ impl LocalStore {
         let items = statement
             .query_map(
                 params![
-                    sync_type,
-                    start_time,
-                    end_time,
-                    database_type,
+                    query.sync_type,
+                    query.start_time,
+                    query.end_time,
+                    query.database_type,
                     search_pattern,
                     safe_page_size,
                     offset
@@ -901,7 +898,11 @@ mod tests {
             .save_execution_history(&run)
             .expect("save execution history");
         let (items, total) = store
-            .list_history(None, None, None, None, None, 1, 10)
+            .list_history(&HistoryQuery {
+                page: Some(1),
+                page_size: Some(10),
+                ..HistoryQuery::default()
+            })
             .expect("list execution history");
         assert_eq!(total, 1);
         assert_eq!(items[0]["runType"], "execution");

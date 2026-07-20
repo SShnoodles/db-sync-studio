@@ -807,9 +807,10 @@ fn quote_default(default_value: &str) -> String {
 }
 
 fn modification_risk(source: &ColumnMeta, target: &ColumnMeta) -> &'static str {
-    if source.column_type != target.column_type || source.nullable != target.nullable {
-        "high"
-    } else if source.is_primary_key != target.is_primary_key {
+    if source.column_type != target.column_type
+        || source.nullable != target.nullable
+        || source.is_primary_key != target.is_primary_key
+    {
         "high"
     } else {
         "medium"
