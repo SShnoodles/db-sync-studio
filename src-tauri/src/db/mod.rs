@@ -615,7 +615,10 @@ fn dollar_quote_delimiter(sql: &str, start: usize) -> Option<&str> {
 
 #[cfg(test)]
 mod sql_tests {
-    use super::{split_sql_statements, sql_statement_count, strip_sql_comments};
+    use super::{
+        quote_identifier, split_sql_statements, sql_statement_count, strip_sql_comments,
+        DbConnection,
+    };
 
     #[test]
     fn splits_plain_statements_and_keeps_trailing_statement() {
@@ -652,6 +655,39 @@ mod sql_tests {
         assert!(statements[0].contains("PERFORM 2;"));
         assert_eq!(statements[1], "SELECT 1;");
         assert_eq!(sql_statement_count(sql), 2);
+    }
+
+    #[test]
+    fn quotes_identifiers_for_each_database_dialect() {
+        assert_eq!(
+            quote_identifier(&connection("mysql"), "order`item"),
+            "`order``item`"
+        );
+        assert_eq!(
+            quote_identifier(&connection("postgresql"), "order\"item"),
+            "\"order\"\"item\""
+        );
+        assert_eq!(
+            quote_identifier(&connection("sqlite"), "订单\"明细"),
+            "\"订单\"\"明细\""
+        );
+    }
+
+    fn connection(db_type: &str) -> DbConnection {
+        DbConnection {
+            id: "test".into(),
+            name: "test".into(),
+            db_type: db_type.into(),
+            host: None,
+            port: None,
+            database: "test".into(),
+            username: None,
+            password: None,
+            ssl_mode: None,
+            environment: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
     }
 }
 

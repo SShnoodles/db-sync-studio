@@ -896,6 +896,33 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn escapes_string_literals_for_each_database_dialect() {
+        let injection = "O'Reilly'); DROP TABLE users; --";
+        assert_eq!(
+            quoted_mysql_string(&format!("path\\{injection}")),
+            "'path\\\\O''Reilly''); DROP TABLE users; --'"
+        );
+        assert_eq!(
+            quoted_postgres_string(injection),
+            "'O''Reilly''); DROP TABLE users; --'"
+        );
+        assert_eq!(
+            quoted_sqlite_string(injection),
+            "'O''Reilly''); DROP TABLE users; --'"
+        );
+    }
+
+    #[test]
+    fn emits_safe_binary_and_null_literals() {
+        assert_eq!(mysql_hex_literal("00 af-10"), "X'00AF10'");
+        assert_eq!(sqlite_hex_literal("de:ad:be:ef"), "X'DEADBEEF'");
+        assert_eq!(
+            sql_value(&connection("postgresql"), &Value::Null, None),
+            "NULL"
+        );
+    }
+
     fn column(
         name: &str,
         column_type: &str,

@@ -331,6 +331,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn escapes_double_quotes_in_identifiers() {
+        assert_eq!(quote_identifier("order\"detail"), "\"order\"\"detail\"");
+    }
+
+    #[test]
     fn data_statements_roll_back_the_entire_batch_on_failure() {
         let path = std::env::temp_dir().join(format!(
             "db-sync-studio-transaction-{}.sqlite",

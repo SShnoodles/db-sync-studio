@@ -442,3 +442,13 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join("")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escapes_backticks_in_identifiers() {
+        assert_eq!(escape_identifier("order`detail"), "order``detail");
+    }
+}

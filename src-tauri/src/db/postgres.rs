@@ -468,3 +468,18 @@ fn comment_literal(comment: Option<&str>) -> String {
         .map(|value| format!("'{}'", value.replace('\'', "''")))
         .unwrap_or_else(|| "NULL".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escapes_identifiers_and_comment_literals() {
+        assert_eq!(quote_identifier("order\"detail"), "\"order\"\"detail\"");
+        assert_eq!(
+            comment_on_table_sql("order\"detail", Some("owner's table")),
+            "COMMENT ON TABLE \"order\"\"detail\" IS 'owner''s table';"
+        );
+        assert_eq!(comment_literal(None), "NULL");
+    }
+}
