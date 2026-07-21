@@ -451,4 +451,28 @@ mod tests {
     fn escapes_backticks_in_identifiers() {
         assert_eq!(escape_identifier("order`detail"), "order``detail");
     }
+
+    #[test]
+    fn maps_mysql_driver_values_to_json() {
+        assert_eq!(
+            mysql_value_to_json(Value::Bytes(b"hello".to_vec()), Some("varchar(20)")),
+            serde_json::json!("hello")
+        );
+        assert_eq!(
+            mysql_value_to_json(Value::Bytes(vec![0x00, 0xAF]), Some("blob")),
+            serde_json::json!("00AF")
+        );
+        assert_eq!(
+            mysql_value_to_json(Value::Int(-7), Some("int")),
+            serde_json::json!(-7)
+        );
+        assert_eq!(
+            mysql_value_to_json(Value::UInt(7), Some("bigint unsigned")),
+            serde_json::json!(7)
+        );
+        assert_eq!(
+            mysql_value_to_json(Value::Date(2026, 7, 22, 3, 4, 5, 6), Some("datetime(6)")),
+            serde_json::json!("2026-07-22 03:04:05.000006")
+        );
+    }
 }

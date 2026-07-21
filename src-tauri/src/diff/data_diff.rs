@@ -245,8 +245,16 @@ fn canonical_column_type(db_type: &str, column_type: &str) -> String {
                     .split_once(')')
                     .map(|(_, suffix)| suffix.trim())
                     .unwrap_or_default();
-                return format!("{integer_type} {suffix}").trim().to_string();
+                let canonical_integer = if integer_type == "integer" {
+                    "int"
+                } else {
+                    integer_type
+                };
+                return format!("{canonical_integer} {suffix}").trim().to_string();
             }
+        }
+        if normalized == "integer" || normalized.starts_with("integer ") {
+            return normalized.replacen("integer", "int", 1);
         }
     }
     normalized
@@ -920,6 +928,76 @@ mod tests {
         assert_eq!(
             sql_value(&connection("postgresql"), &Value::Null, None),
             "NULL"
+        );
+    }
+
+    #[test]
+    fn canonicalizes_column_types_by_database_rules() {
+        for column_type in ["INT", "integer(8)", "UNSIGNED BIG INT"] {
+            assert_eq!(canonical_column_type("sqlite", column_type), "integer");
+        }
+        assert_eq!(canonical_column_type("sqlite", "VARCHAR(255)"), "text");
+        assert_eq!(canonical_column_type("sqlite", "DOUBLE PRECISION"), "real");
+        assert_eq!(canonical_column_type("sqlite", ""), "blob");
+        assert_eq!(canonical_column_type("sqlite", "DECIMAL(10, 2)"), "numeric");
+
+        assert_eq!(
+            canonical_column_type("mysql", "INT(11) UNSIGNED"),
+            "int unsigned"
+        );
+        assert_eq!(
+            canonical_column_type("mysql", "INTEGER(11) UNSIGNED"),
+            "int unsigned"
+        );
+        assert_eq!(canonical_column_type("mysql", "INTEGER"), "int");
+        assert_eq!(
+            canonical_column_type("mysql", "VARCHAR(255)"),
+            "varchar(255)"
+        );
+
+        assert_eq!(
+            canonical_column_type("postgresql", "CHARACTER   VARYING(50)"),
+            "character varying(50)"
+        );
+        assert_eq!(
+            canonical_column_type("postgresql", "TIMESTAMP WITH TIME ZONE"),
+            "timestamp with time zone"
+        );
+    }
+
+    #[test]
+    fn maps_typed_values_to_database_literals() {
+        assert_eq!(
+            mysql_sql_value(
+                &Value::String("42".into()),
+                &column("amount", "INT(11)", false, false, None)
+            ),
+            "42"
+        );
+        assert_eq!(
+            mysql_sql_value(
+                &Value::String("0F".into()),
+                &column("flags", "BIT(8)", false, false, None)
+            ),
+            "b'00001111'"
+        );
+        assert_eq!(
+            sqlite_sql_value(
+                &Value::String("3.14".into()),
+                &column("amount", "NUMERIC", false, false, None)
+            ),
+            "3.14"
+        );
+        assert_eq!(
+            postgres_sql_value(
+                &Value::String("550e8400-e29b-41d4-a716-446655440000".into()),
+                "uuid"
+            ),
+            "'550e8400-e29b-41d4-a716-446655440000'::uuid"
+        );
+        assert_eq!(
+            postgres_sql_value(&serde_json::json!([1, "two", null]), "text[]"),
+            "ARRAY[1, 'two', NULL]::text[]"
         );
     }
 

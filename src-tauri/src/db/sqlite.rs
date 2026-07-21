@@ -336,6 +336,31 @@ mod tests {
     }
 
     #[test]
+    fn maps_sqlite_values_to_json() {
+        assert_eq!(sqlite_value_to_json(ValueRef::Null), JsonValue::Null);
+        assert_eq!(
+            sqlite_value_to_json(ValueRef::Integer(-7)),
+            serde_json::json!(-7)
+        );
+        assert_eq!(
+            sqlite_value_to_json(ValueRef::Real(3.5)),
+            serde_json::json!(3.5)
+        );
+        assert_eq!(
+            sqlite_value_to_json(ValueRef::Real(f64::NAN)),
+            JsonValue::Null
+        );
+        assert_eq!(
+            sqlite_value_to_json(ValueRef::Text("中文".as_bytes())),
+            serde_json::json!("中文")
+        );
+        assert_eq!(
+            sqlite_value_to_json(ValueRef::Blob(&[0x00, 0xAF])),
+            serde_json::json!("00AF")
+        );
+    }
+
+    #[test]
     fn data_statements_roll_back_the_entire_batch_on_failure() {
         let path = std::env::temp_dir().join(format!(
             "db-sync-studio-transaction-{}.sqlite",
