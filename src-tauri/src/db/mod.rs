@@ -376,6 +376,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut in_backtick = false;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
+    let mut dollar_quote: Option<String> = None;
     let chars = sql.char_indices().collect::<Vec<_>>();
     let mut index = 0;
 
@@ -387,6 +388,16 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         } else {
             None
         };
+
+        if let Some(delimiter) = dollar_quote.as_deref() {
+            if sql[byte_index..].starts_with(delimiter) {
+                index += delimiter.chars().count();
+                dollar_quote = None;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
 
         if in_line_comment {
             if character == '\n' {
@@ -415,6 +426,13 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
                 in_block_comment = true;
                 index += 2;
                 continue;
+            }
+            if character == '$' {
+                if let Some(delimiter) = dollar_quote_delimiter(sql, byte_index) {
+                    dollar_quote = Some(delimiter.to_string());
+                    index += delimiter.chars().count();
+                    continue;
+                }
             }
         }
 
@@ -452,14 +470,14 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 pub fn sql_statement_count(sql: &str) -> usize {
     split_sql_statements(sql)
         .into_iter()
-        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
+        .filter(|statement| has_executable_sql(statement))
         .count()
 }
 
 fn execute_sql(connection: &DbConnection, sql: &str, transactional: bool) -> Result<usize, String> {
     let statements = split_sql_statements(sql)
         .into_iter()
-        .filter(|statement| !strip_sql_comments(statement).trim().is_empty())
+        .filter(|statement| has_executable_sql(statement))
         .collect::<Vec<_>>();
     if statements.is_empty() {
         return Ok(0);
@@ -478,6 +496,14 @@ fn execute_sql(connection: &DbConnection, sql: &str, transactional: bool) -> Res
     Ok(statements.len())
 }
 
+fn has_executable_sql(statement: &str) -> bool {
+    !strip_sql_comments(statement)
+        .trim()
+        .trim_matches(';')
+        .trim()
+        .is_empty()
+}
+
 fn strip_sql_comments(sql: &str) -> String {
     let mut output = String::new();
     let mut in_single = false;
@@ -485,17 +511,30 @@ fn strip_sql_comments(sql: &str) -> String {
     let mut in_backtick = false;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
-    let chars = sql.chars().collect::<Vec<_>>();
+    let mut dollar_quote: Option<String> = None;
+    let chars = sql.char_indices().collect::<Vec<_>>();
     let mut index = 0;
 
     while index < chars.len() {
-        let character = chars[index];
-        let next = chars.get(index + 1).copied();
+        let (byte_index, character) = chars[index];
+        let next = chars.get(index + 1).map(|(_, value)| *value);
         let previous = if index > 0 {
-            chars.get(index - 1).copied()
+            chars.get(index - 1).map(|(_, value)| *value)
         } else {
             None
         };
+
+        if let Some(delimiter) = dollar_quote.as_deref() {
+            if sql[byte_index..].starts_with(delimiter) {
+                output.push_str(delimiter);
+                index += delimiter.chars().count();
+                dollar_quote = None;
+            } else {
+                output.push(character);
+                index += 1;
+            }
+            continue;
+        }
 
         if in_line_comment {
             if character == '\n' {
@@ -526,6 +565,14 @@ fn strip_sql_comments(sql: &str) -> String {
                 index += 2;
                 continue;
             }
+            if character == '$' {
+                if let Some(delimiter) = dollar_quote_delimiter(sql, byte_index) {
+                    output.push_str(delimiter);
+                    dollar_quote = Some(delimiter.to_string());
+                    index += delimiter.chars().count();
+                    continue;
+                }
+            }
         }
 
         match character {
@@ -548,6 +595,64 @@ fn strip_sql_comments(sql: &str) -> String {
         index += 1;
     }
     output
+}
+
+fn dollar_quote_delimiter(sql: &str, start: usize) -> Option<&str> {
+    let rest = sql.get(start..)?;
+    if !rest.starts_with('$') {
+        return None;
+    }
+    let closing = rest.get(1..)?.find('$')? + 1;
+    let tag = rest.get(1..closing)?;
+    if !tag
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return None;
+    }
+    rest.get(..=closing)
+}
+
+#[cfg(test)]
+mod sql_tests {
+    use super::{split_sql_statements, sql_statement_count, strip_sql_comments};
+
+    #[test]
+    fn splits_plain_statements_and_keeps_trailing_statement() {
+        assert_eq!(
+            split_sql_statements("SELECT 1; INSERT INTO items VALUES (2)"),
+            vec!["SELECT 1;", "INSERT INTO items VALUES (2)"]
+        );
+    }
+
+    #[test]
+    fn ignores_semicolons_inside_strings_and_quoted_identifiers() {
+        let sql = "INSERT INTO `semi;table` (\"semi;column\", value) VALUES ('it''s;ok', '反斜杠\\';仍在字符串'); SELECT 2;";
+        let statements = split_sql_statements(sql);
+        assert_eq!(statements.len(), 2);
+        assert!(statements[0].contains("it''s;ok"));
+        assert_eq!(statements[1], "SELECT 2;");
+    }
+
+    #[test]
+    fn ignores_semicolons_in_comments_and_comment_only_fragments() {
+        let sql = "-- first; comment\nSELECT 1; /* second; comment */ ; -- only comment;";
+        assert_eq!(sql_statement_count(sql), 1);
+        assert_eq!(
+            strip_sql_comments("SELECT '--not-comment'; -- comment"),
+            "SELECT '--not-comment'; "
+        );
+    }
+
+    #[test]
+    fn keeps_postgres_dollar_quoted_blocks_together() {
+        let sql = "CREATE FUNCTION demo() RETURNS void AS $body$\nBEGIN\n  PERFORM 'a;b'; -- body comment\n  PERFORM 2;\nEND;\n$body$ LANGUAGE plpgsql;\nSELECT 1;";
+        let statements = split_sql_statements(sql);
+        assert_eq!(statements.len(), 2);
+        assert!(statements[0].contains("PERFORM 2;"));
+        assert_eq!(statements[1], "SELECT 1;");
+        assert_eq!(sql_statement_count(sql), 2);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
