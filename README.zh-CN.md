@@ -42,18 +42,19 @@ pnpm dev
 pnpm tauri dev
 ```
 
-构建前端：
+运行全部质量检查（TypeScript、Rust 格式、Clippy、测试以及前端生产构建）：
+
+```bash
+pnpm check
+```
+
+仅构建前端：
 
 ```bash
 pnpm build
 ```
 
-检查 Rust：
-
-```bash
-cd src-tauri
-cargo check
-```
+推送到 `main` 或创建 Pull Request 时，GitHub Actions 会自动执行同一套质量检查。
 
 ## 本地数据
 

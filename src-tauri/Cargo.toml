@@ -1,9 +1,10 @@
 [package]
 name = "db-sync-studio"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.1.1"
+description = "Local-first database schema and data comparison tool"
+authors = ["ssnoodles <ssnoodles0226@gmail.com>"]
 edition = "2021"
+repository = "https://github.com/SShnoodles/db-sync-studio"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

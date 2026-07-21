@@ -42,18 +42,19 @@ Start the Tauri app:
 pnpm tauri dev
 ```
 
-Build the frontend:
+Run all quality checks (TypeScript, Rust formatting, Clippy, tests, and the frontend production build):
+
+```bash
+pnpm check
+```
+
+Build the frontend only:
 
 ```bash
 pnpm build
 ```
 
-Check Rust:
-
-```bash
-cd src-tauri
-cargo check
-```
+The same quality checks run automatically for pushes to `main` and pull requests.
 
 ## Local data
 
