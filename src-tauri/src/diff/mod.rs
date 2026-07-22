@@ -816,3 +816,162 @@ fn modification_risk(source: &ColumnMeta, target: &ColumnMeta) -> &'static str {
         "medium"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use uuid::Uuid;
+
+    #[test]
+    fn sqlite_schema_diff_matches_snapshot() {
+        let source_path =
+            std::env::temp_dir().join(format!("schema-source-{}.sqlite", Uuid::new_v4()));
+        let target_path =
+            std::env::temp_dir().join(format!("schema-target-{}.sqlite", Uuid::new_v4()));
+        Connection::open(&source_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE parents (id INTEGER PRIMARY KEY);
+                 CREATE TABLE items (
+                   id INTEGER PRIMARY KEY,
+                   name TEXT NOT NULL DEFAULT 'new',
+                   parent_id INTEGER,
+                   new_col TEXT,
+                   FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE
+                 );
+                 CREATE UNIQUE INDEX idx_items_name ON items(name);
+                 CREATE TABLE source_only (id INTEGER PRIMARY KEY);
+                 CREATE VIEW active_items AS SELECT id, name FROM items;",
+            )
+            .unwrap();
+        Connection::open(&target_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE parents (id INTEGER PRIMARY KEY);
+                 CREATE TABLE items (
+                   id INTEGER PRIMARY KEY,
+                   name TEXT,
+                   parent_id INTEGER,
+                   legacy TEXT,
+                   FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE RESTRICT
+                 );
+                 CREATE INDEX idx_items_name ON items(name);
+                 CREATE TABLE target_only (id INTEGER PRIMARY KEY);
+                 CREATE VIEW active_items AS SELECT id FROM items;",
+            )
+            .unwrap();
+
+        let diffs = compare_schema(
+            &sqlite_connection(source_path.to_string_lossy().into_owned()),
+            &sqlite_connection(target_path.to_string_lossy().into_owned()),
+            &[],
+        )
+        .unwrap();
+        let snapshot = serde_json::to_string_pretty(&diffs).unwrap();
+        assert_eq!(snapshot, SCHEMA_DIFF_SNAPSHOT);
+
+        std::fs::remove_file(source_path).unwrap();
+        std::fs::remove_file(target_path).unwrap();
+    }
+
+    fn sqlite_connection(database: String) -> DbConnection {
+        DbConnection {
+            id: Uuid::new_v4().to_string(),
+            name: "snapshot".into(),
+            db_type: "sqlite".into(),
+            host: None,
+            port: None,
+            database,
+            username: None,
+            password: None,
+            ssl_mode: None,
+            environment: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    const SCHEMA_DIFF_SNAPSHOT: &str = r#"[
+  {
+    "objectType": "view",
+    "tableName": "active_items",
+    "columnName": null,
+    "diffType": "modified",
+    "sourceValue": "CREATE VIEW active_items AS SELECT id, name FROM items;",
+    "targetValue": "CREATE VIEW active_items AS SELECT id FROM items;",
+    "syncSql": null,
+    "riskLevel": "medium"
+  },
+  {
+    "objectType": "column",
+    "tableName": "items",
+    "columnName": "legacy",
+    "diffType": "removed",
+    "sourceValue": null,
+    "targetValue": "TEXT NULL default=NULL primary=false extra=",
+    "syncSql": "ALTER TABLE \"items\" DROP COLUMN \"legacy\";",
+    "riskLevel": "high"
+  },
+  {
+    "objectType": "column",
+    "tableName": "items",
+    "columnName": "name",
+    "diffType": "modified",
+    "sourceValue": "TEXT NOT NULL default='new' primary=false extra=",
+    "targetValue": "TEXT NULL default=NULL primary=false extra=",
+    "syncSql": "-- SQLite cannot modify column \"name\" on \"items\" directly. Recreate the table manually.",
+    "riskLevel": "high"
+  },
+  {
+    "objectType": "column",
+    "tableName": "items",
+    "columnName": "new_col",
+    "diffType": "added",
+    "sourceValue": "TEXT NULL default=NULL primary=false extra=",
+    "targetValue": null,
+    "syncSql": "ALTER TABLE \"items\" ADD COLUMN \"new_col\" TEXT NULL;",
+    "riskLevel": "low"
+  },
+  {
+    "objectType": "index",
+    "tableName": "items",
+    "columnName": "idx_items_name",
+    "diffType": "modified",
+    "sourceValue": "create unique index idx_items_name on items(name)",
+    "targetValue": "create index idx_items_name on items(name)",
+    "syncSql": "DROP INDEX \"idx_items_name\";\nCREATE UNIQUE INDEX idx_items_name ON items(name);",
+    "riskLevel": "medium"
+  },
+  {
+    "objectType": "foreignKey",
+    "tableName": "items",
+    "columnName": "foreign_key_0",
+    "diffType": "modified",
+    "sourceValue": "FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE NO ACTION ON DELETE CASCADE",
+    "targetValue": "FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+    "syncSql": null,
+    "riskLevel": "high"
+  },
+  {
+    "objectType": "table",
+    "tableName": "source_only",
+    "columnName": null,
+    "diffType": "added",
+    "sourceValue": "BASE TABLE",
+    "targetValue": null,
+    "syncSql": "CREATE TABLE source_only (id INTEGER PRIMARY KEY);",
+    "riskLevel": "medium"
+  },
+  {
+    "objectType": "table",
+    "tableName": "target_only",
+    "columnName": null,
+    "diffType": "removed",
+    "sourceValue": null,
+    "targetValue": "BASE TABLE",
+    "syncSql": "DROP TABLE \"target_only\";",
+    "riskLevel": "high"
+  }
+]"#;
+}
