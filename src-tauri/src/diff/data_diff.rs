@@ -103,11 +103,7 @@ pub fn compare_data(
         }
     }
 
-    if truncated {
-        for diff in &mut diffs {
-            diff.sync_sql = None;
-        }
-    }
+    disable_sync_for_truncated_result(&mut diffs, truncated);
     let sync_sql = diffs
         .iter()
         .filter_map(|diff| diff.sync_sql.as_deref())
@@ -301,13 +297,23 @@ fn fetch_rows_in_batches(
 fn rows_by_key(
     rows: &[BTreeMap<String, Value>],
     key_columns: &[String],
-) -> Result<HashMap<String, BTreeMap<String, Value>>, String> {
-    let mut map = HashMap::new();
+) -> Result<BTreeMap<String, BTreeMap<String, Value>>, String> {
+    let mut map = BTreeMap::new();
     for row in rows {
         let key = key_string(row, key_columns)?;
-        map.insert(key, row.clone());
+        if map.insert(key.clone(), row.clone()).is_some() {
+            return Err(format!("Duplicate primary key value encountered: {key}"));
+        }
     }
     Ok(map)
+}
+
+fn disable_sync_for_truncated_result(diffs: &mut [DataDiff], truncated: bool) {
+    if truncated {
+        for diff in diffs {
+            diff.sync_sql = None;
+        }
+    }
 }
 
 fn insert_diff(
@@ -404,15 +410,14 @@ fn changed_columns(
 }
 
 fn key_string(row: &BTreeMap<String, Value>, key_columns: &[String]) -> Result<String, String> {
-    key_columns
+    let values = key_columns
         .iter()
         .map(|column| {
             row.get(column)
-                .map(value_key)
                 .ok_or_else(|| format!("Primary key column `{column}` was not found in row"))
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|parts| parts.join("\u{1f}"))
+        .collect::<Result<Vec<_>, _>>()?;
+    serde_json::to_string(&values).map_err(|error| error.to_string())
 }
 
 fn key_pairs(row: &BTreeMap<String, Value>, key_columns: &[String]) -> Vec<(String, Value)> {
@@ -857,16 +862,11 @@ fn is_plain_postgres_number_type(column_type: &str) -> bool {
         || column_type.starts_with("decimal(")
 }
 
-fn value_key(value: &Value) -> String {
-    match value {
-        Value::Null => "<NULL>".into(),
-        _ => value.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use uuid::Uuid;
 
     #[test]
     fn preflight_reports_primary_key_type_and_required_column_issues() {
@@ -1001,6 +1001,143 @@ mod tests {
         );
     }
 
+    #[test]
+    fn composite_keys_are_collision_safe_and_missing_keys_fail() {
+        let first = row(&[
+            ("left", serde_json::json!("a\u{1f}b")),
+            ("right", serde_json::json!("c")),
+        ]);
+        let second = row(&[
+            ("left", serde_json::json!("a")),
+            ("right", serde_json::json!("b\u{1f}c")),
+        ]);
+        let keys = vec!["left".into(), "right".into()];
+        assert_ne!(
+            key_string(&first, &keys).unwrap(),
+            key_string(&second, &keys).unwrap()
+        );
+        assert!(key_string(&first, &["missing".into()])
+            .unwrap_err()
+            .contains("Primary key column `missing`"));
+    }
+
+    #[test]
+    fn duplicate_primary_keys_are_rejected() {
+        let duplicate = row(&[("id", serde_json::json!(1))]);
+        let error = rows_by_key(&[duplicate.clone(), duplicate], &["id".into()]).unwrap_err();
+        assert!(error.contains("Duplicate primary key value"));
+    }
+
+    #[test]
+    fn changed_columns_treats_missing_as_null_and_ignores_keys() {
+        let source = row(&[
+            ("id", serde_json::json!(1)),
+            ("name", serde_json::json!("new")),
+        ]);
+        let target = row(&[
+            ("id", serde_json::json!(2)),
+            ("name", serde_json::json!("old")),
+            ("optional", Value::Null),
+        ]);
+        let changes = changed_columns(
+            &source,
+            &target,
+            &["id".into()],
+            &["id".into(), "name".into(), "optional".into()],
+        );
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].column_name, "name");
+    }
+
+    #[test]
+    fn truncated_results_disable_all_sync_sql() {
+        let target = connection("sqlite");
+        let source_row = row(&[("id", serde_json::json!(1))]);
+        let columns = HashMap::from([("id".into(), column("id", "INTEGER", false, true, None))]);
+        let mut diffs = vec![insert_diff(
+            &target,
+            "items",
+            &["id".into()],
+            &source_row,
+            &["id".into()],
+            &columns,
+        )];
+        disable_sync_for_truncated_result(&mut diffs, true);
+        assert!(diffs.iter().all(|diff| diff.sync_sql.is_none()));
+    }
+
+    #[test]
+    fn sqlite_data_diff_covers_insert_update_delete_same_and_generated_columns() {
+        let source_path =
+            std::env::temp_dir().join(format!("data-source-{}.sqlite", Uuid::new_v4()));
+        let target_path =
+            std::env::temp_dir().join(format!("data-target-{}.sqlite", Uuid::new_v4()));
+        let schema = "CREATE TABLE items (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            normalized TEXT GENERATED ALWAYS AS (upper(name)) STORED
+        );";
+        let source_db = Connection::open(&source_path).unwrap();
+        source_db.execute_batch(schema).unwrap();
+        source_db
+            .execute_batch(
+                "INSERT INTO items (id, name) VALUES
+                 (1, 'same'), (2, 'new'), (3, 'insert');",
+            )
+            .unwrap();
+        let target_db = Connection::open(&target_path).unwrap();
+        target_db.execute_batch(schema).unwrap();
+        target_db
+            .execute_batch(
+                "INSERT INTO items (id, name) VALUES
+                 (1, 'same'), (2, 'old'), (4, 'delete');",
+            )
+            .unwrap();
+        drop(source_db);
+        drop(target_db);
+
+        let request = DataCompareRequest {
+            source_connection_id: "source".into(),
+            target_connection_id: "target".into(),
+            table_name: "items".into(),
+            allow_delete: false,
+        };
+        let (_, summary, diffs, sync_sql) = compare_data(
+            &sqlite_connection(source_path.to_string_lossy().into_owned()),
+            &sqlite_connection(target_path.to_string_lossy().into_owned()),
+            &request,
+        )
+        .unwrap();
+
+        assert_eq!(
+            (
+                summary.inserts,
+                summary.updates,
+                summary.deletes,
+                summary.same_rows
+            ),
+            (1, 1, 1, 1)
+        );
+        assert_eq!(summary.compared_rows, 3);
+        assert!(!summary.truncated);
+        assert_eq!(
+            diffs
+                .iter()
+                .map(|diff| diff.diff_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["update", "insert", "delete"]
+        );
+        assert!(diffs
+            .iter()
+            .flat_map(|diff| &diff.changed_columns)
+            .all(|change| change.column_name != "normalized"));
+        assert!(diffs.last().unwrap().sync_sql.is_none());
+        assert!(!sync_sql.contains("DELETE"));
+
+        std::fs::remove_file(source_path).unwrap();
+        std::fs::remove_file(target_path).unwrap();
+    }
+
     fn column(
         name: &str,
         column_type: &str,
@@ -1037,5 +1174,19 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
         }
+    }
+
+    fn sqlite_connection(database: String) -> DbConnection {
+        DbConnection {
+            database,
+            ..connection("sqlite")
+        }
+    }
+
+    fn row(values: &[(&str, Value)]) -> BTreeMap<String, Value> {
+        values
+            .iter()
+            .map(|(column, value)| ((*column).into(), value.clone()))
+            .collect()
     }
 }
