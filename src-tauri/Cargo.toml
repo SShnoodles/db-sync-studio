@@ -1,6 +1,6 @@
 [package]
 name = "db-sync-studio"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first database schema and data comparison tool"
 authors = ["ssnoodles <ssnoodles0226@gmail.com>"]
 edition = "2021"
